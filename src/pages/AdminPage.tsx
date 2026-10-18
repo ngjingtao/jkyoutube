@@ -1175,14 +1175,25 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
               />
             </label>
             <label className="flex flex-col gap-1 sm:col-span-2">
-              <span className="text-[12px] font-medium text-fg2">Thumbnail URL</span>
+              <span className="text-[12px] font-medium text-fg2">
+                Thumbnail URL{' '}
+                <span className="text-fg2">
+                  (the only way to get a real cover — see the note below)
+                </span>
+              </span>
               <input
                 value={thumbnailUrl}
                 onChange={(e) => setThumbnailUrl(e.target.value)}
-                placeholder="Right-click the image on Bilibili → Copy image address"
+                placeholder="On Bilibili: right-click the cover → Copy image address, then paste here"
                 className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
               />
             </label>
+            <p className="text-[12px] leading-5 text-fg2 sm:col-span-2">
+              Bilibili's cover cannot be looked up automatically — its API refuses browser requests,
+              it blocks datacentre addresses, and the image filename is a random hash that cannot be
+              worked out from the video id. Paste the address here, or leave it blank and the app
+              draws a neat stand-in card with the title on it.
+            </p>
             <label className="flex flex-col gap-1">
               <span className="text-[12px] font-medium text-fg2">Views</span>
               <input
