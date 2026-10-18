@@ -1,0 +1,62 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# This is a *static site*, which is the key decision: Render's free static sites
+# never sleep, so the app opens instantly on the iPad and Android. Video bytes
+# are never served from here — they come from YouTube's own CDN via the embed
+# player, so bandwidth stays at zero.
+#
+# All data (videos, channels, users) lives in Supabase, not on this server.
+
+services:
+  - type: web
+    name: jkyoutube
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+
+    # Client-side routing: every app route must return index.html.
+    # Static assets under /assets, /icons and the manifest are matched as real
+    # files first, so they are deliberately not listed here.
+    routes:
+      - type: rewrite
+        source: /watch/*
+        destination: /index.html
+      - type: rewrite
+        source: /results
+        destination: /index.html
+      - type: rewrite
+        source: /channel/*
+        destination: /index.html
+      - type: rewrite
+        source: /playlist/*
+        destination: /index.html
+      - type: rewrite
+        source: /feed/*
+        destination: /index.html
+      - type: rewrite
+        source: /shorts
+        destination: /index.html
+      - type: rewrite
+        source: /admin
+        destination: /index.html
+      # Android App Links verification for the Trusted Web Activity (Phase 6).
+      # The file is generated into public/.well-known/ at build time.
+      - type: rewrite
+        source: /app
+        destination: /index.html
+
+    headers:
+      # Hashed filenames are safe to cache forever.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      # The document itself must never be cached, or deploys appear stale.
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manifest.webmanifest
+        name: Content-Type
+        value: application/manifest+json

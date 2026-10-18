@@ -1,0 +1,181 @@
+@import 'tailwindcss';
+
+/* Dark mode is driven by a class on <html> (set by a script in index.html). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------
+   YouTube design tokens.
+   Values match YouTube's own light/dark palettes closely enough that
+   the difference is not perceptible side by side.
+   ------------------------------------------------------------------ */
+:root {
+  --yt-bg: #ffffff;
+  --yt-surface: #ffffff;
+  --yt-fg: #0f0f0f;
+  --yt-fg2: #606060;
+  --yt-line: rgba(0, 0, 0, 0.1);
+  --yt-hover: rgba(0, 0, 0, 0.05);
+  --yt-active: rgba(0, 0, 0, 0.1);
+  --yt-chip: rgba(0, 0, 0, 0.05);
+  --yt-chip-hover: rgba(0, 0, 0, 0.1);
+  --yt-chip-on: #0f0f0f;
+  --yt-chip-on-fg: #ffffff;
+  --yt-search: #ffffff;
+  --yt-search-btn: #f8f8f8;
+  --yt-brand: #ff0000;
+  --yt-thumb-bg: #e5e5e5;
+  --yt-skeleton: rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  --yt-bg: #0f0f0f;
+  --yt-surface: #0f0f0f;
+  --yt-fg: #f1f1f1;
+  --yt-fg2: #aaaaaa;
+  --yt-line: rgba(255, 255, 255, 0.2);
+  --yt-hover: rgba(255, 255, 255, 0.1);
+  --yt-active: rgba(255, 255, 255, 0.2);
+  --yt-chip: rgba(255, 255, 255, 0.1);
+  --yt-chip-hover: rgba(255, 255, 255, 0.2);
+  --yt-chip-on: #f1f1f1;
+  --yt-chip-on-fg: #0f0f0f;
+  --yt-search: #121212;
+  --yt-search-btn: rgba(255, 255, 255, 0.08);
+  --yt-brand: #ff0000;
+  --yt-thumb-bg: #2a2a2a;
+  --yt-skeleton: rgba(255, 255, 255, 0.1);
+}
+
+@theme inline {
+  --color-bg: var(--yt-bg);
+  --color-surface: var(--yt-surface);
+  --color-fg: var(--yt-fg);
+  --color-fg2: var(--yt-fg2);
+  --color-line: var(--yt-line);
+  --color-hover: var(--yt-hover);
+  --color-active: var(--yt-active);
+  --color-chip: var(--yt-chip);
+  --color-chip-hover: var(--yt-chip-hover);
+  --color-chip-on: var(--yt-chip-on);
+  --color-chip-on-fg: var(--yt-chip-on-fg);
+  --color-search: var(--yt-search);
+  --color-search-btn: var(--yt-search-btn);
+  --color-brand: var(--yt-brand);
+  --color-thumbbg: var(--yt-thumb-bg);
+  --color-skeleton: var(--yt-skeleton);
+
+  --font-sans: 'Roboto', 'Arial', 'Helvetica', sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    background-color: var(--yt-bg);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--yt-bg);
+    color: var(--yt-fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  /* Standalone PWA: allow content under the status bar on notched devices. */
+  @supports (padding: env(safe-area-inset-top)) {
+    body {
+      padding-top: 0;
+    }
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input {
+    font: inherit;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ::selection {
+    background: var(--yt-brand);
+    color: #fff;
+  }
+}
+
+/* YouTube-style thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.5);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Two-line clamp used by video titles, exactly like YouTube */
+.yt-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.yt-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Ripple-less press feedback, matching YouTube's icon button behaviour */
+.yt-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  transition: background-color 0.1s linear;
+}
+.yt-icon-btn:hover {
+  background-color: var(--yt-hover);
+}
+.yt-icon-btn:active {
+  background-color: var(--yt-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

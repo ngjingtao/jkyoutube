@@ -1,0 +1,17 @@
+# Normalise line endings to LF in the repository.
+# This PC is Windows, but Render and GitHub Actions build on Linux — without
+# this, a CRLF checkout can break .mjs / .yml files on the build machine.
+* text=auto eol=lf
+
+# Binary assets must never be converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Keep generated lockfiles out of diffs.
+package-lock.json -diff linguist-generated
