@@ -48,8 +48,12 @@ export function ChannelPage() {
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-fg2">
               <span className="font-medium text-fg">{channel.handle}</span>
-              <span>•</span>
-              <span>{formatSubscribers(channel.subscriberCount ?? 0)}</span>
+              {typeof channel.subscriberCount === 'number' ? (
+                <>
+                  <span>•</span>
+                  <span>{formatSubscribers(channel.subscriberCount)}</span>
+                </>
+              ) : null}
               <span>•</span>
               <span>{formatCount(videos.length)} videos</span>
             </div>

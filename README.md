@@ -31,6 +31,7 @@ Then open <http://localhost:5173>. Admin panel is at <http://localhost:5173/admi
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | TypeScript check, no output on success |
+| `npm test` | Runs the duration-parser tests |
 | `npm run icons` | Regenerate PWA icons in `public/icons/` |
 
 ---
@@ -77,6 +78,30 @@ Same steps as the iPad using **Chrome** → *Install app*. The proper APK comes 
 - [x] "What the app shows" control: Auto / Only my videos / Only samples.
       Auto hides the placeholder library the moment you add your first video,
       so the app never mixes someone else's content into yours.
+- [x] YouTube Data API key field, with a Test button and step-by-step setup
+      instructions
+- [x] "Refresh all from YouTube" to update view counts, likes and subscriber
+      counts on demand
+
+### Why the YouTube API key matters
+
+The public oEmbed endpoint only returns a **title, author name and thumbnail**.
+It has no view counts, likes, subscriber counts, duration or real upload date.
+Without a Data API key, a video you add looks like this:
+
+```
+Untitled video        My Channel · 0 subscribers
+0 views · just now    0 likes
+```
+
+With a key, every field is copied from YouTube itself, including the genuine
+upload date (so "3 years ago" is correct) and duration. Lookups cost 1 quota
+unit per 50 videos against a free 10,000/day allowance.
+
+**Restrict the key** in Google Cloud Console — allow only *YouTube Data API v3*,
+and under Application restrictions choose *Websites* and add your Render address
+plus `http://localhost:*`. The key travels in the page, so anyone who can open
+the app could otherwise use it.
 
 **Not built yet**
 

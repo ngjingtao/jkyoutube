@@ -1,11 +1,17 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
 import { classNames, parseYouTubeId, timeAgo, youTubeThumbnail } from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
+import {
+  YouTubeApiError,
+  fetchChannelMetadata,
+  fetchVideoMetadata,
+  verifyApiKey,
+} from '../lib/youtube'
 import { AlertIcon, CheckIcon, CloseIcon, PlusIcon, SpinnerIcon } from '../components/icons'
-import type { Video } from '../types'
+import type { Channel, Video } from '../types'
 
 /**
  * The PC-side control panel.
@@ -15,8 +21,7 @@ import type { Video } from '../types'
  *
  * NOTE: the passcode below is a *preview* gate only — there is no server yet
  * and everything is stored in this browser. Real per-user authentication
- * arrives with Supabase in Phase 3, at which point this screen is protected
- * server-side and this gate is removed.
+ * arrives with Supabase in Phase 3.
  */
 
 const PREVIEW_PASSCODE = 'admin'
@@ -35,8 +40,8 @@ function PasscodeGate({ onUnlock }: { onUnlock: () => void }) {
     <div className="mx-auto flex max-w-[420px] flex-col gap-4 px-6 py-24">
       <h1 className="text-[22px] font-semibold text-fg">Admin</h1>
       <p className="text-[13px] leading-5 text-fg2">
-        Preview gate only. Until Supabase authentication is wired up, this password
-        lives in the page source and data is stored in this browser.
+        Preview gate only. Until Supabase authentication is wired up, this password lives in
+        the page source and data is stored in this browser.
       </p>
       <form
         onSubmit={(e) => {
@@ -74,9 +79,50 @@ function PasscodeGate({ onUnlock }: { onUnlock: () => void }) {
   )
 }
 
+/* ------------------------------------------------------------------ helpers */
+
+interface EnrichResult {
+  videos: Awaited<ReturnType<typeof fetchVideoMetadata>>
+  channels: Awaited<ReturnType<typeof fetchChannelMetadata>>
+}
+
+/**
+ * Copies real YouTube metadata using the Data API.
+ *
+ * Without a key we can only reach the public oEmbed endpoint, which supplies a
+ * title and channel name and nothing else — hence view counts, likes,
+ * subscriber counts and durations would all be wrong.
+ */
+function useEnrichment() {
+  const [apiKey, setApiKeyState] = useLocalStorage('jk.youtubeApiKey', '')
+
+  const enrich = useCallback(
+    async (videoIds: string[]): Promise<EnrichResult | null> => {
+      const key = apiKey.trim()
+      if (!key || videoIds.length === 0) return null
+
+      const videos = await fetchVideoMetadata(videoIds, key)
+      const channelIds = [...new Set(videos.map((v) => v.channelId).filter(Boolean))]
+      const channels = channelIds.length ? await fetchChannelMetadata(channelIds, key) : []
+      return { videos, channels }
+    },
+    [apiKey],
+  )
+
+  return { apiKey, setApiKey: setApiKeyState, hasKey: apiKey.trim().length > 0, enrich }
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof YouTubeApiError) return err.message
+  if (err instanceof Error) return `Could not reach YouTube: ${err.message}`
+  return 'Something went wrong talking to YouTube.'
+}
+
+/* -------------------------------------------------------------- dashboard */
+
 function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
-  const { categories, customVideos, removeVideo, resetToSeed, addVideo, videos } = useLibrary()
-  const [libraryUrl, setLibraryUrl] = useState(() => window.location.origin)
+  const { categories, customVideos, removeVideo, resetToSeed, videos } = useLibrary()
+  const [libraryUrl] = useState(() => window.location.origin)
 
   return (
     <div className="mx-auto max-w-[1000px] px-4 pb-24 pt-8 md:px-6">
@@ -120,24 +166,17 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
           >
             Copy
           </button>
-          <button
-            type="button"
-            onClick={() => setLibraryUrl(window.location.origin)}
-            className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover"
-          >
-            Reset
-          </button>
         </div>
       </div>
+
+      <ApiKeyCard />
 
       <LibraryContentsCard />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <AddSingleVideo categories={categories} addVideo={addVideo} />
-        <BulkAdd categories={categories} addVideo={addVideo} />
+        <AddSingleVideo categories={categories} />
+        <BulkAdd categories={categories} />
       </div>
-
-      <YoutubeSearchKeyCard />
 
       <MyLibrary
         videos={customVideos}
@@ -149,23 +188,130 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   )
 }
 
-/* ------------------------------------------------------------------ adding */
+/* ------------------------------------------------------------- API key ---- */
+
+function ApiKeyCard() {
+  const { apiKey, setApiKey, hasKey } = useEnrichment()
+  const [draft, setDraft] = useState(apiKey)
+  const [status, setStatus] = useState<{ kind: 'ok' | 'err' | 'busy'; text: string } | null>(null)
+
+  async function test(key: string) {
+    if (!key.trim()) {
+      setStatus({ kind: 'err', text: 'Paste a key first.' })
+      return
+    }
+    setStatus({ kind: 'busy', text: 'Checking the key with Google…' })
+    try {
+      await verifyApiKey(key.trim())
+      setApiKey(key.trim())
+      setStatus({ kind: 'ok', text: 'Key works. Real view counts, likes, subscribers, durations and upload dates will now be copied.' })
+    } catch (err) {
+      setStatus({ kind: 'err', text: describeError(err) })
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">YouTube Data API key</h2>
+        <span
+          className={classNames(
+            'rounded-full px-2 py-0.5 text-[11px] font-medium',
+            hasKey ? 'bg-[#2ba640]/15 text-[#2ba640]' : 'bg-[#ff9d00]/15 text-[#ff9d00]',
+          )}
+        >
+          {hasKey ? 'Connected' : 'Not set'}
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        <strong className="font-medium text-fg">This is what makes added videos look real.</strong>{' '}
+        Without it we can only read a title and channel name, so view counts, likes, subscriber
+        counts, durations and upload dates would all be wrong. With it, every field is copied
+        from YouTube itself. Free — lookups cost 1 unit each against a 10,000/day allowance.
+      </p>
+
+      <details className="mt-3 rounded-lg border border-line p-3">
+        <summary className="cursor-pointer text-[13px] font-medium text-fg">
+          How to get a key (2 minutes)
+        </summary>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-[12px] leading-5 text-fg2">
+          <li>
+            Go to <span className="text-fg">console.cloud.google.com</span> and create a project.
+          </li>
+          <li>
+            <span className="text-fg">APIs &amp; Services → Library</span>, search for{' '}
+            <span className="text-fg">YouTube Data API v3</span>, and click Enable.
+          </li>
+          <li>
+            <span className="text-fg">APIs &amp; Services → Credentials → Create credentials →
+            API key</span>.
+          </li>
+          <li>
+            Copy it and paste it below. Then click <span className="text-fg">Restrict key</span>{' '}
+            and, under <span className="text-fg">API restrictions</span>, allow only YouTube Data
+            API v3.
+          </li>
+          <li>
+            Under <span className="text-fg">Application restrictions</span> choose{' '}
+            <span className="text-fg">Websites</span> and add your Render address (for example
+            <code className="mx-1 rounded bg-chip px-1">https://jkyoutube.onrender.com/*</code>
+            plus <code className="mx-1 rounded bg-chip px-1">http://localhost:*</code>). This
+            matters because the key travels in the page, so anyone who opens the app could
+            otherwise use it.
+          </li>
+        </ol>
+      </details>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          type="password"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setStatus(null)
+          }}
+          placeholder="AIza…"
+          className="h-10 min-w-[240px] flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+        />
+        <button
+          type="button"
+          onClick={() => test(draft)}
+          className="h-10 rounded-lg bg-[#065fd4] px-4 text-[13px] font-medium text-white hover:brightness-110"
+        >
+          Save &amp; test
+        </button>
+        {hasKey ? (
+          <button
+            type="button"
+            onClick={() => {
+              setApiKey('')
+              setDraft('')
+              setStatus({ kind: 'err', text: 'Key removed. Metadata copying is off.' })
+            }}
+            className="h-10 rounded-lg bg-chip px-4 text-[13px] font-medium text-fg hover:bg-chip-hover"
+          >
+            Remove
+          </button>
+        ) : null}
+      </div>
+
+      <StatusMessage message={status} />
+    </section>
+  )
+}
 
 /**
  * Controls whether the bundled placeholder library is shown.
  *
- * This matters because the placeholders are hardcoded, so without a control
- * here the app could never show *only* your own content.
+ * The placeholders are hardcoded, so without a control here the app could never
+ * show *only* your own content.
  */
 function LibraryContentsCard() {
   const { libraryMode, setLibraryMode, sampleVideoCount, customVideos } = useLibrary()
 
   const options: Array<{ value: LibraryMode; label: string; hint: string }> = [
-    {
-      value: 'auto',
-      label: 'Auto',
-      hint: 'Placeholders show only until you add your first video.',
-    },
+    { value: 'auto', label: 'Auto', hint: 'Placeholders show only until you add your first video.' },
     {
       value: 'mine',
       label: 'Only my videos',
@@ -204,9 +350,7 @@ function LibraryContentsCard() {
               onClick={() => setLibraryMode(o.value)}
               className={classNames(
                 'flex-1 rounded-lg border px-3 py-2 text-left transition-colors',
-                active
-                  ? 'border-[#065fd4] bg-[#065fd4]/10'
-                  : 'border-line hover:bg-chip',
+                active ? 'border-[#065fd4] bg-[#065fd4]/10' : 'border-line hover:bg-chip',
               )}
             >
               <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
@@ -222,7 +366,7 @@ function LibraryContentsCard() {
       <p className="mt-3 flex items-start gap-2 text-[12px] leading-5 text-fg2">
         <AlertIcon size={16} className="mt-px shrink-0" />
         <span>
-          Until the Supabase database is connected, this setting and your added videos live in
+          Until Supabase is connected, this setting and your added videos live in
           <strong className="font-medium text-fg"> this browser only</strong>. On the iPad the app
           will still show the placeholders — not a bug, just the missing database.
         </span>
@@ -231,56 +375,123 @@ function LibraryContentsCard() {
   )
 }
 
-function AddSingleVideo({
-  categories,
-  addVideo,
-}: {
-  categories: { id: string; name: string }[]
-  addVideo: ReturnType<typeof useLibrary>['addVideo']
-}) {
+/* ------------------------------------------------------------------ adding */
+
+function AddSingleVideo({ categories }: { categories: { id: string; name: string }[] }) {
+  const { addVideo } = useLibrary()
+  const { hasKey, enrich } = useEnrichment()
+
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [authorName, setAuthorName] = useState('')
   const [categoryId, setCategoryId] = useState('all')
-  const [looking, setLooking] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
   const previewId = parseYouTubeId(url)
 
   async function lookup(id: string) {
-    setLooking(true)
+    setBusy(true)
     setMessage(null)
-    const info = await fetchOEmbed(id)
-    setLooking(false)
-    if (info) {
-      setTitle((t) => t || info.title)
-      setAuthorName((a) => a || info.authorName)
-      setMessage({ kind: 'ok', text: 'Details filled in from YouTube. Check them, then add.' })
-    } else {
-      setMessage({
-        kind: 'err',
-        text: 'Could not read the title automatically. Type one in, or add it as-is.',
-      })
+    try {
+      if (hasKey) {
+        const result = await enrich([id])
+        const meta = result?.videos[0]
+        if (meta) {
+          setTitle(meta.title)
+          setAuthorName(meta.channelTitle)
+          setMessage({
+            kind: 'ok',
+            text: `Copied from YouTube: title, channel, description, duration, upload date and ${meta.viewCount.toLocaleString()} views.`,
+          })
+          return
+        }
+        setMessage({
+          kind: 'err',
+          text: 'YouTube returned no data for that id. Check the link — the video may be private or deleted.',
+        })
+        return
+      }
+
+      const info = await fetchOEmbed(id)
+      if (info) {
+        setTitle((t) => t || info.title)
+        setAuthorName((a) => a || info.authorName)
+        setMessage({
+          kind: 'err',
+          text: 'Only the title and channel name could be copied. Without an API key, views, likes, subscribers, duration and the upload date stay missing.',
+        })
+      } else {
+        setMessage({ kind: 'err', text: 'Could not read that video. Type a title in manually.' })
+      }
+    } catch (err) {
+      setMessage({ kind: 'err', text: describeError(err) })
+    } finally {
+      setBusy(false)
     }
   }
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const result = addVideo({ url, title, authorName, categoryId })
-    if (!result.ok) {
-      setMessage({ kind: 'err', text: result.error ?? 'Could not add that video.' })
+    if (!previewId) {
+      setMessage({ kind: 'err', text: 'That does not look like a YouTube link.' })
       return
     }
-    setMessage({ kind: 'ok', text: `Added “${result.video?.title}”.` })
-    setUrl('')
-    setTitle('')
-    setAuthorName('')
+
+    setBusy(true)
+    setMessage(null)
+    try {
+      // Always enrich on add, even if Fetch was never pressed. One request
+      // returns the video and its channel together.
+      const result = hasKey ? await enrich([previewId]) : null
+      const meta = result?.videos[0]
+      const chan = result?.channels.find((c) => c.id === meta?.channelId)
+
+      const added = addVideo({
+        url,
+        title: meta?.title || title,
+        description: meta?.description,
+        authorName: meta?.channelTitle || authorName,
+        categoryId,
+        durationSeconds: meta?.durationSeconds,
+        youtubeChannelId: meta?.channelId,
+        channelAvatarUrl: chan?.avatarUrl,
+        subscriberCount: chan?.subscriberCount,
+        handle: chan?.handle,
+        viewCount: meta?.viewCount,
+        likeCount: meta?.likeCount,
+        publishedAt: meta?.publishedAt,
+        thumbnailUrl: meta?.thumbnailUrl,
+        isLive: meta?.isLive,
+      })
+
+      if (!added.ok) {
+        setMessage({ kind: 'err', text: added.error ?? 'Could not add that video.' })
+        return
+      }
+
+      setMessage({
+        kind: 'ok',
+        text: meta
+          ? `Added “${added.video?.title}” with every YouTube detail copied.`
+          : `Added “${added.video?.title}”. No API key, so some details are still missing.`,
+      })
+      setUrl('')
+      setTitle('')
+      setAuthorName('')
+    } catch (err) {
+      setMessage({ kind: 'err', text: describeError(err) })
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
     <section className="rounded-xl border border-line p-4">
       <h2 className="text-[16px] font-semibold text-fg">Add a video</h2>
-      <p className="mt-1 text-[13px] text-fg2">Paste a YouTube link. Details are read automatically.</p>
+      <p className="mt-1 text-[13px] text-fg2">
+        Paste a YouTube link. All the details are copied automatically.
+      </p>
 
       <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
         <label className="flex flex-col gap-1">
@@ -288,7 +499,9 @@ function AddSingleVideo({
           <div className="flex gap-2">
             <input
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value)
+              }}
               onBlur={() => {
                 if (previewId && !title) void lookup(previewId)
               }}
@@ -297,11 +510,11 @@ function AddSingleVideo({
             />
             <button
               type="button"
-              disabled={!previewId || looking}
+              disabled={!previewId || busy}
               onClick={() => previewId && lookup(previewId)}
               className="h-10 shrink-0 rounded-lg bg-chip px-3 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
             >
-              {looking ? <SpinnerIcon size={18} className="animate-spin" /> : 'Fetch'}
+              {busy ? <SpinnerIcon size={18} className="animate-spin" /> : 'Fetch'}
             </button>
           </div>
         </label>
@@ -355,10 +568,10 @@ function AddSingleVideo({
 
         <button
           type="submit"
-          disabled={!previewId}
+          disabled={!previewId || busy}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#065fd4] text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
-          <PlusIcon size={20} />
+          {busy ? <SpinnerIcon size={18} className="animate-spin" /> : <PlusIcon size={20} />}
           Add to library
         </button>
 
@@ -368,55 +581,87 @@ function AddSingleVideo({
   )
 }
 
-function BulkAdd({
-  categories,
-  addVideo,
-}: {
-  categories: { id: string; name: string }[]
-  addVideo: ReturnType<typeof useLibrary>['addVideo']
-}) {
+function BulkAdd({ categories }: { categories: { id: string; name: string }[] }) {
+  const { addVideo } = useLibrary()
+  const { hasKey, enrich } = useEnrichment()
+
   const [text, setText] = useState('')
   const [categoryId, setCategoryId] = useState('all')
+  const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const lines = text
+    const ids = text
       .split(/[\n,\s]+/)
-      .map((l) => l.trim())
-      .filter(Boolean)
+      .map((l) => parseYouTubeId(l))
+      .filter((v): v is string => Boolean(v))
 
-    if (lines.length === 0) {
-      setMessage({ kind: 'err', text: 'Paste one or more links first.' })
+    if (ids.length === 0) {
+      setMessage({ kind: 'err', text: 'No valid YouTube links found in that box.' })
       return
     }
 
-    let added = 0
-    let skipped = 0
-    for (const line of lines) {
-      if (!parseYouTubeId(line)) {
-        skipped += 1
-        continue
-      }
-      const result = addVideo({ url: line, categoryId, title: 'Untitled video' })
-      if (result.ok) added += 1
-      else skipped += 1
-    }
+    setBusy(true)
+    setMessage(null)
+    try {
+      const metaById = new Map<string, Awaited<ReturnType<typeof fetchVideoMetadata>>[number]>()
+      const channelById = new Map<
+        string,
+        Awaited<ReturnType<typeof fetchChannelMetadata>>[number]
+      >()
 
-    setMessage({
-      kind: added > 0 ? 'ok' : 'err',
-      text: `Added ${added} video${added === 1 ? '' : 's'}${
-        skipped ? `, skipped ${skipped}` : ''
-      }. Titles can be filled in with “Fetch” on each row below.`,
-    })
-    if (added > 0) setText('')
+      if (hasKey) {
+        const result = await enrich(ids)
+        for (const v of result?.videos ?? []) metaById.set(v.id, v)
+        for (const c of result?.channels ?? []) channelById.set(c.id, c)
+      }
+
+      let added = 0
+      let skipped = 0
+      for (const id of ids) {
+        const meta = metaById.get(id)
+        const chan = meta ? channelById.get(meta.channelId) : undefined
+        const result = addVideo({
+          url: `https://www.youtube.com/watch?v=${id}`,
+          title: meta?.title ?? 'Untitled video',
+          description: meta?.description,
+          authorName: meta?.channelTitle,
+          categoryId,
+          durationSeconds: meta?.durationSeconds,
+          youtubeChannelId: meta?.channelId,
+          channelAvatarUrl: chan?.avatarUrl,
+          subscriberCount: chan?.subscriberCount,
+          handle: chan?.handle,
+          viewCount: meta?.viewCount,
+          likeCount: meta?.likeCount,
+          publishedAt: meta?.publishedAt,
+          thumbnailUrl: meta?.thumbnailUrl,
+          isLive: meta?.isLive,
+        })
+        if (result.ok) added += 1
+        else skipped += 1
+      }
+
+      setMessage({
+        kind: added > 0 ? 'ok' : 'err',
+        text: hasKey
+          ? `Added ${added} video${added === 1 ? '' : 's'} with full YouTube details${skipped ? `, skipped ${skipped}` : ''}.`
+          : `Added ${added} video${added === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}. No API key set, so views, likes, subscribers and durations are missing — add a key above and use "Refresh all".`,
+      })
+      if (added > 0) setText('')
+    } catch (err) {
+      setMessage({ kind: 'err', text: describeError(err) })
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
     <section className="rounded-xl border border-line p-4">
       <h2 className="text-[16px] font-semibold text-fg">Bulk add</h2>
       <p className="mt-1 text-[13px] text-fg2">
-        One link per line. Titles start as “Untitled video” — fetch them individually after.
+        One link per line. All details are copied in a single YouTube request.
       </p>
       <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
         <textarea
@@ -442,49 +687,14 @@ function BulkAdd({
         </label>
         <button
           type="submit"
-          className="h-10 rounded-lg bg-[#065fd4] text-[14px] font-medium text-white hover:brightness-110"
+          disabled={busy}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#065fd4] text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
+          {busy ? <SpinnerIcon size={18} className="animate-spin" /> : null}
           Add all
         </button>
         <StatusMessage message={message} />
       </form>
-    </section>
-  )
-}
-
-/**
- * Real YouTube search needs a Data API key. Kept as a visible reminder that
- * the key is required before search can return non-library results.
- */
-function YoutubeSearchKeyCard() {
-  const [key, setKey] = useLocalStorage('jk.youtubeApiKey', '')
-  return (
-    <section className="mt-6 rounded-xl border border-line p-4">
-      <h2 className="text-[16px] font-semibold text-fg">Search behaviour</h2>
-      <p className="mt-1 text-[13px] leading-5 text-fg2">
-        To make search return real YouTube results (filtered to what you allow), a YouTube Data
-        API key is needed. Without one, search only covers this library — which is the easiest
-        way for a curious viewer to notice.
-      </p>
-      <div className="mt-3 flex gap-2">
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="YouTube Data API key (optional)"
-          className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-        />
-        <button
-          type="button"
-          onClick={() => setKey('')}
-          className="h-10 shrink-0 rounded-lg bg-chip px-3 text-[13px] font-medium text-fg hover:bg-chip-hover"
-        >
-          Clear
-        </button>
-      </div>
-      <p className="mt-2 text-[12px] text-fg2">
-        Not wired up yet — stored here ready for Phase 2.
-      </p>
     </section>
   )
 }
@@ -502,18 +712,98 @@ function MyLibrary({
   onReset: () => void
   categories: { id: string; name: string }[]
 }) {
-  const { updateVideo } = useLibrary()
+  const { updateVideo, updateChannel, getChannel } = useLibrary()
+  const { hasKey, enrich } = useEnrichment()
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [refreshBusy, setRefreshBusy] = useState(false)
+  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
   const categoryName = (id?: string) =>
     categories.find((c) => c.id === id)?.name ?? 'Uncategorised'
 
-  async function refetch(video: Video) {
+  /** Applies fetched metadata onto one video (and its channel). */
+  const applyMeta = useCallback(
+    (
+      id: string,
+      meta: Awaited<ReturnType<typeof fetchVideoMetadata>>[number],
+      channelMap: Map<string, Awaited<ReturnType<typeof fetchChannelMetadata>>[number]>,
+    ) => {
+      updateVideo(id, {
+        title: meta.title,
+        description: meta.description,
+        durationSeconds: meta.durationSeconds,
+        viewCount: meta.viewCount,
+        likeCount: meta.likeCount,
+        publishedAt: meta.publishedAt,
+        thumbnailUrl: meta.thumbnailUrl,
+        isLive: meta.isLive,
+      })
+      const ch = channelMap.get(meta.channelId)
+      if (ch) {
+        updateChannel(`ch-yt-${ch.id}`, {
+          name: ch.title,
+          handle: ch.handle,
+          avatarUrl: ch.avatarUrl,
+          subscriberCount: ch.subscriberCount,
+        })
+      }
+    },
+    [updateVideo, updateChannel],
+  )
+
+  async function refreshOne(video: Video) {
     if (!video.youtubeId) return
+    if (!hasKey) {
+      setMessage({ kind: 'err', text: 'Add a YouTube API key above first.' })
+      return
+    }
     setBusyId(video.id)
-    const info = await fetchOEmbed(video.youtubeId)
-    setBusyId(null)
-    if (info) updateVideo(video.id, { title: info.title })
+    setMessage(null)
+    try {
+      const result = await enrich([video.youtubeId])
+      const meta = result?.videos[0]
+      if (!meta) {
+        setMessage({ kind: 'err', text: 'YouTube had no data for that video.' })
+        return
+      }
+      applyMeta(video.id, meta, new Map((result?.channels ?? []).map((c) => [c.id, c])))
+      setMessage({ kind: 'ok', text: `Refreshed “${meta.title}”.` })
+    } catch (err) {
+      setMessage({ kind: 'err', text: describeError(err) })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function refreshAll() {
+    const ids = videos.map((v) => v.youtubeId).filter((v): v is string => Boolean(v))
+    if (ids.length === 0) return
+    if (!hasKey) {
+      setMessage({ kind: 'err', text: 'Add a YouTube API key above first.' })
+      return
+    }
+    setRefreshBusy(true)
+    setMessage(null)
+    try {
+      const result = await enrich(ids)
+      const channelMap = new Map((result?.channels ?? []).map((c) => [c.id, c]))
+      let count = 0
+      for (const meta of result?.videos ?? []) {
+        const match = videos.find((v) => v.youtubeId === meta.id)
+        if (match) {
+          applyMeta(match.id, meta, channelMap)
+          count += 1
+        }
+      }
+      setMessage({
+        kind: 'ok',
+        text: `Refreshed ${count} video${count === 1 ? '' : 's'} — view counts, likes, subscribers and dates are now current.`,
+      })
+    } catch (err) {
+      setMessage({ kind: 'err', text: describeError(err) })
+    } finally {
+      setRefreshBusy(false)
+    }
   }
 
   function exportJson() {
@@ -532,7 +822,16 @@ function MyLibrary({
         <h2 className="text-[16px] font-semibold text-fg">
           Added by you <span className="text-fg2">({videos.length})</span>
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={videos.length === 0 || refreshBusy}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#065fd4] px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          >
+            {refreshBusy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+            Refresh all from YouTube
+          </button>
           <button
             type="button"
             onClick={exportJson}
@@ -554,70 +853,90 @@ function MyLibrary({
         </div>
       </div>
 
+      <div className="px-4 pt-3">
+        <StatusMessage message={message} />
+      </div>
+
       {videos.length === 0 ? (
         <p className="p-6 text-center text-[13px] text-fg2">
           Nothing added yet. The app is currently showing the built-in sample library.
         </p>
       ) : (
         <ul className="divide-y divide-[color:var(--yt-line)]">
-          {videos.map((v) => (
-            <li key={v.id} className="flex flex-wrap items-center gap-3 p-3">
-              <img
-                src={v.thumbnailUrl}
-                alt=""
-                className="h-[45px] w-20 shrink-0 rounded object-cover"
-              />
-              <div className="min-w-0 flex-1">
-                <input
-                  value={v.title}
-                  onChange={(e) => updateVideo(v.id, { title: e.target.value })}
-                  className="w-full rounded border border-transparent bg-transparent px-1 py-1 text-[14px] font-medium text-fg outline-none hover:border-line focus:border-[#1c62b9] focus:bg-search"
+          {videos.map((v) => {
+            const channel = getChannel(v.channelId)
+            return (
+              <li key={v.id} className="flex flex-wrap items-center gap-3 p-3">
+                <img
+                  src={v.thumbnailUrl}
+                  alt=""
+                  className="h-[45px] w-20 shrink-0 rounded object-cover"
                 />
-                <p className="truncate px-1 text-[12px] text-fg2">
-                  {categoryName(v.categoryId)} · added {timeAgo(v.publishedAt)} ·{' '}
-                  {v.youtubeId}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => refetch(v)}
-                className="rounded-lg bg-chip px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-chip-hover"
-              >
-                {busyId === v.id ? 'Fetching…' : 'Refetch title'}
-              </button>
-              <a
-                href={`/watch/${v.id}`}
-                className="rounded-lg bg-chip px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-chip-hover"
-              >
-                Preview
-              </a>
-              <button
-                type="button"
-                aria-label="Remove"
-                onClick={() => onRemove(v.id)}
-                className="yt-icon-btn h-8 w-8 text-[#ff4e45]"
-              >
-                <CloseIcon size={18} />
-              </button>
-            </li>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <input
+                    value={v.title}
+                    onChange={(e) => updateVideo(v.id, { title: e.target.value })}
+                    className="w-full rounded border border-transparent bg-transparent px-1 py-1 text-[14px] font-medium text-fg outline-none hover:border-line focus:border-[#1c62b9] focus:bg-search"
+                  />
+                  <p className="truncate px-1 text-[12px] text-fg2">
+                    {channel?.name ?? 'Unknown channel'}
+                    {typeof channel?.subscriberCount === 'number'
+                      ? ` · ${channel.subscriberCount.toLocaleString()} subscribers`
+                      : ''}
+                    {' · '}
+                    {v.viewCount.toLocaleString()} views
+                    {' · '}
+                    {categoryName(v.categoryId)}
+                    {' · '}
+                    {v.durationSeconds > 0 ? `${v.durationSeconds}s` : 'no duration'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshOne(v)}
+                  disabled={busyId === v.id}
+                  className="inline-flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
+                >
+                  {busyId === v.id ? <SpinnerIcon size={14} className="animate-spin" /> : null}
+                  Refresh
+                </button>
+                <a
+                  href={`/watch/${v.id}`}
+                  className="rounded-lg bg-chip px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-chip-hover"
+                >
+                  Preview
+                </a>
+                <button
+                  type="button"
+                  aria-label="Remove"
+                  onClick={() => onRemove(v.id)}
+                  className="yt-icon-btn h-8 w-8 text-[#ff4e45]"
+                >
+                  <CloseIcon size={18} />
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>
   )
 }
 
-function StatusMessage({ message }: { message: { kind: 'ok' | 'err'; text: string } | null }) {
+function StatusMessage({
+  message,
+}: {
+  message: { kind: 'ok' | 'err' | 'busy'; text: string } | null
+}) {
   if (!message) return null
+  const colour =
+    message.kind === 'ok' ? 'text-[#2ba640]' : message.kind === 'err' ? 'text-[#ff9d00]' : 'text-fg2'
   return (
-    <p
-      className={classNames(
-        'flex items-start gap-2 text-[13px] leading-5',
-        message.kind === 'ok' ? 'text-[#2ba640]' : 'text-[#ff9d00]',
-      )}
-    >
+    <p className={classNames('mt-3 flex items-start gap-2 text-[13px] leading-5', colour)}>
       {message.kind === 'ok' ? (
         <CheckIcon size={18} className="mt-px shrink-0" />
+      ) : message.kind === 'busy' ? (
+        <SpinnerIcon size={18} className="mt-px shrink-0 animate-spin" />
       ) : (
         <AlertIcon size={18} className="mt-px shrink-0" />
       )}

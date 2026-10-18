@@ -153,9 +153,11 @@ export function WatchPage() {
               <ChannelAvatar channel={channel} size={40} />
               <span className="flex flex-col">
                 <span className="text-[16px] font-medium leading-5 text-fg">{channel?.name}</span>
-                <span className="text-[12px] leading-4 text-fg2">
-                  {formatSubscribers(channel?.subscriberCount ?? 0)}
-                </span>
+                {typeof channel?.subscriberCount === 'number' ? (
+                  <span className="text-[12px] leading-4 text-fg2">
+                    {formatSubscribers(channel.subscriberCount)}
+                  </span>
+                ) : null}
               </span>
             </Link>
 

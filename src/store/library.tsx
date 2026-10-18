@@ -42,6 +42,16 @@ export interface NewVideoInput {
   categoryId?: string
   authorName?: string
   durationSeconds?: number
+  /* Fields copied from the YouTube Data API when a key is configured. */
+  youtubeChannelId?: string
+  channelAvatarUrl?: string
+  subscriberCount?: number
+  handle?: string
+  viewCount?: number
+  likeCount?: number
+  publishedAt?: string
+  thumbnailUrl?: string
+  isLive?: boolean
 }
 
 export interface AddVideoResult {
@@ -88,11 +98,13 @@ interface LibraryValue {
 
   /* ---------------------------------------------------------- admin side */
   customVideos: Video[]
+  customChannels: Channel[]
   sampleVideoCount: number
   libraryMode: LibraryMode
   setLibraryMode: (mode: LibraryMode) => void
   addVideo: (input: NewVideoInput) => AddVideoResult
   updateVideo: (id: string, patch: Partial<Video>) => void
+  updateChannel: (id: string, patch: Partial<Channel>) => void
   removeVideo: (id: string) => void
   resetToSeed: () => void
 }
@@ -324,19 +336,52 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       }
 
       const author = (input.authorName ?? 'My Channel').trim() || 'My Channel'
-      const handle = `@${slugify(author) || 'mychannel'}`
-      let channel = channels.find((c) => c.name.toLowerCase() === author.toLowerCase())
+      const handle = input.handle?.trim() || `@${slugify(author) || 'mychannel'}`
+
+      // Prefer matching the real YouTube channel id so two different channels
+      // that happen to share a display name do not get merged.
+      let channel = input.youtubeChannelId
+        ? channels.find((c) => c.id === `ch-yt-${input.youtubeChannelId}`)
+        : undefined
+      if (!channel) {
+        channel = channels.find((c) => c.name.toLowerCase() === author.toLowerCase())
+      }
 
       if (!channel) {
         channel = {
-          id: `ch-${slugify(author) || 'mychannel'}-${Date.now().toString(36)}`,
+          id: input.youtubeChannelId
+            ? `ch-yt-${input.youtubeChannelId}`
+            : `ch-${slugify(author) || 'mychannel'}-${Date.now().toString(36)}`,
           name: author,
           handle,
-          avatarUrl: '',
+          avatarUrl: input.channelAvatarUrl ?? '',
           description: '',
-          subscriberCount: 0,
+          ...(input.subscriberCount !== undefined
+            ? { subscriberCount: input.subscriberCount }
+            : {}),
         }
-        setCustomChannels((prev) => [...prev, channel as Channel])
+        setCustomChannels((prev) =>
+          // The id is derived from the YouTube channel id, so a bulk add of
+          // several videos from one channel must not append it repeatedly.
+          prev.some((c) => c.id === channel!.id) ? prev : [...prev, channel as Channel],
+        )
+      } else if (channel.id.startsWith('ch-yt-') || customChannels.some((c) => c.id === channel!.id)) {
+        // Refresh the details we already know about this channel.
+        setCustomChannels((prev) =>
+          prev.map((c) =>
+            c.id === channel!.id
+              ? {
+                  ...c,
+                  name: author || c.name,
+                  handle: handle || c.handle,
+                  avatarUrl: input.channelAvatarUrl || c.avatarUrl,
+                  ...(input.subscriberCount !== undefined
+                    ? { subscriberCount: input.subscriberCount }
+                    : {}),
+                }
+              : c,
+          ),
+        )
       }
 
       const created: Video = {
@@ -347,20 +392,21 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
         youtubeId: videoId,
         embeddable: true,
-        thumbnailUrl: youTubeThumbnail(videoId),
+        thumbnailUrl: input.thumbnailUrl || youTubeThumbnail(videoId),
         durationSeconds: input.durationSeconds ?? 0,
         channelId: channel.id,
         categoryId: input.categoryId ?? 'all',
-        publishedAt: new Date().toISOString(),
-        viewCount: 0,
-        likeCount: 0,
+        publishedAt: input.publishedAt ?? new Date().toISOString(),
+        viewCount: input.viewCount ?? 0,
+        likeCount: input.likeCount ?? 0,
+        isLive: input.isLive ?? false,
         status: 'published',
       }
 
       setCustomVideos((prev) => [created, ...prev])
       return { ok: true, video: created }
     },
-    [allVideos, channels, setCustomChannels, setCustomVideos],
+    [allVideos, channels, customChannels, setCustomChannels, setCustomVideos],
   )
 
   const updateVideo = useCallback(
@@ -368,6 +414,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       setCustomVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
     },
     [setCustomVideos],
+  )
+
+  const updateChannel = useCallback(
+    (id: string, patch: Partial<Channel>) => {
+      setCustomChannels((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+    },
+    [setCustomChannels],
   )
 
   const removeVideo = useCallback(
@@ -405,11 +458,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     isSubscribed,
     toggleSubscribe,
     customVideos,
+    customChannels,
     sampleVideoCount: seedVideos.length,
     libraryMode,
     setLibraryMode,
     addVideo,
     updateVideo,
+    updateChannel,
     removeVideo,
     resetToSeed,
   }

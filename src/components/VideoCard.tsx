@@ -12,7 +12,12 @@ import { MoreVerticalIcon, PlayIcon } from './icons'
 import type { Video } from '../types'
 
 function DurationBadge({ video }: { video: Video }) {
-  const isLive = video.durationSeconds === 0
+  const isLive = video.isLive === true
+
+  // A duration of 0 with no live flag means "unknown", not "live". Showing a
+  // red LIVE badge on an ordinary video would be an instant giveaway.
+  if (!isLive && video.durationSeconds <= 0) return null
+
   return (
     <span
       className={classNames(

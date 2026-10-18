@@ -285,6 +285,7 @@ export const videos: Video[] = seeds.map((s, i) => ({
   publishedAt: daysAgo(s.days, s.hours ?? 0),
   viewCount: s.views,
   likeCount: s.likes,
+  isLive: s.duration === 0,
   status: 'published',
   pinned: s.pinned,
 }))

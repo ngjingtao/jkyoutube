@@ -38,6 +38,8 @@ export interface Video {
   publishedAt: string
   viewCount: number
   likeCount?: number
+  /** True only for an actual live stream; duration 0 alone does not mean live. */
+  isLive?: boolean
   status: VideoStatus
   pinned?: boolean
 }
