@@ -30,13 +30,25 @@ const config: CapacitorConfig = {
     captureInput: true,
     webContentsDebuggingEnabled: false,
 
-    // The stock Android WebView user-agent contains a "; wv" token that marks
-    // it as a WebView. Several site firewalls treat that as a bot signal, and
-    // third-party embedded players can refuse to serve video as a result. This
-    // presents the app as ordinary Chrome for Android instead, which is what a
-    // real phone browser sends.
+    // A DESKTOP user agent, deliberately.
+    //
+    // Bilibili's embed redirects any user agent containing "Mobile" to a
+    // different player:
+    //
+    //   const isMobile = !!ua.match(/AppleWebKit.*Mobile.*/)
+    //   if (isMobile) location.href = '//www.bilibili.com/blackboard/webplayer/mbplayer.html'
+    //
+    // That mobile player is built for full-screen phone browsing, not for being
+    // framed on a third-party site, and it fails there. The stock Android
+    // WebView user agent contains "Mobile", so the APK was getting the mobile
+    // player — while desktop Chrome gets the embedded one, and iPad Safari
+    // reports itself as "Macintosh" and therefore also gets the embedded one.
+    // That matches exactly where playback worked and where it did not.
+    //
+    // The "; wv" token is gone as a side effect, which also avoids firewalls
+    // that treat a WebView as a bot.
     overrideUserAgent:
-      'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   },
 }
 

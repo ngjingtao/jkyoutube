@@ -86,11 +86,19 @@ An outbound link to the real YouTube is a one-tap escape, so there are none.
   title is a link to youtube.com; its Share button also hands out a youtube.com
   URL. No player parameter removes either. Clicks in that band are forwarded to
   play/pause, which is what tapping the video does anyway.
+- The Bilibili iframe is **sandboxed without `allow-popups`**. Their bundle
+  leaves the page with `window.open()` from a click handler that handles
+  `"play"`, `"main"` and `"download"` targets — the related-video, logo and
+  download links. Blocking pop-ups turns all of those into no-ops, so a stray
+  click cannot drop the viewer onto the real bilibili.com.
 
-**What cannot be removed.** The shield does not follow the player into
+**What cannot be removed.** The YouTube shield does not follow the player into
 fullscreen, and YouTube's settings (gear) menu still contains "Copy video URL"
-entries. Those live inside YouTube's iframe; removing them would mean re-hosting
-the video streams, which this project deliberately does not do.
+entries. The Bilibili sandbox blocks pop-ups but not the frame navigating
+*itself*, so a link that loads a page inside the frame would show Bilibili
+inside the app rather than in a new tab. Those live inside the embedded players;
+removing them fully would mean re-hosting the video streams, which this project
+deliberately does not do.
 
 Because of that, the real protection is at the device level: block `youtube.com`
 and the YouTube app using **Screen Time** (iPad) or **Family Link** (Android).
