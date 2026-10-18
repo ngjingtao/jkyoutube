@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Capacitor } from '@capacitor/core'
+import { getCookieState } from '../lib/native'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
 import { signIn, signOut } from '../lib/remote'
@@ -163,6 +165,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
 
       <PendingLocalCard />
 
+      <DiagnosticsCard />
+
       <div className="mt-6 rounded-xl border border-line bg-chip p-4">
         <p className="text-[13px] leading-5 text-fg2">
           <strong className="font-medium text-fg">Share this address</strong> with the iPad and
@@ -199,6 +203,185 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
         categories={categories}
       />
     </div>
+  )
+}
+
+/* ------------------------------------------------------------ diagnostics -- */
+
+interface DiagRow {
+  label: string
+  value: string
+  verdict: 'ok' | 'bad' | 'info'
+}
+
+/**
+ * Runs the checks that distinguish an Android WebView problem from a Bilibili
+ * one, and can be copied to the clipboard. Built because the same embed works
+ * in Safari and desktop Chrome but failed in the APK, and guessing had already
+ * cost one wrong fix.
+ */
+function DiagnosticsCard() {
+  const [rows, setRows] = useState<DiagRow[]>([])
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  async function run() {
+    setBusy(true)
+    setCopied(false)
+    const out: DiagRow[] = []
+
+    // Which shell are we running in?
+    out.push({
+      label: 'Platform',
+      value: Capacitor.isNativePlatform() ? 'native shell (the APK)' : 'browser or installed PWA',
+      verdict: 'info',
+    })
+    out.push({ label: 'User agent', value: navigator.userAgent, verdict: 'info' })
+
+    // Third-party cookies: the prime suspect.
+    const cookieState = getCookieState()
+    if (cookieState) {
+      out.push({
+        label: 'Third-party cookie fix applied',
+        value: cookieState.applied ? 'yes' : 'NO — the native call did not take effect',
+        verdict: cookieState.applied ? 'ok' : 'bad',
+      })
+      out.push({
+        label: 'WebView present when applied',
+        value: String(cookieState.hasWebView),
+        verdict: cookieState.hasWebView ? 'ok' : 'bad',
+      })
+      out.push({
+        label: 'CookieManager accepting cookies',
+        value: String(cookieState.acceptingCookies),
+        verdict: cookieState.acceptingCookies ? 'ok' : 'bad',
+      })
+    } else {
+      out.push({
+        label: 'Third-party cookie fix',
+        value: 'not applicable (only runs in the native shell)',
+        verdict: 'info',
+      })
+    }
+    out.push({
+      label: 'navigator.cookieEnabled',
+      value: String(navigator.cookieEnabled),
+      verdict: navigator.cookieEnabled ? 'ok' : 'bad',
+    })
+
+    // Can we reach Bilibili at all from this device?
+    const reachable = await new Promise<boolean>((resolve) => {
+      const img = new Image()
+      const timer = window.setTimeout(() => resolve(false), 8000)
+      img.onload = () => {
+        window.clearTimeout(timer)
+        resolve(true)
+      }
+      img.onerror = () => {
+        window.clearTimeout(timer)
+        // An error still proves the host answered.
+        resolve(true)
+      }
+      img.src = `https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico?cb=${Date.now()}`
+    })
+    out.push({
+      label: 'Bilibili CDN reachable',
+      value: reachable ? 'yes' : 'no response in 8s',
+      verdict: reachable ? 'ok' : 'bad',
+    })
+
+    // Which video codecs can this WebView actually decode?
+    const codecs: Array<[string, string]> = [
+      ['H.264', 'video/mp4; codecs="avc1.42E01E"'],
+      ['HEVC / H.265', 'video/mp4; codecs="hvc1.1.6.L93.B0"'],
+      ['AV1', 'video/mp4; codecs="av01.0.05M.08"'],
+      ['VP9', 'video/webm; codecs="vp9"'],
+    ]
+    if (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported) {
+      const supported = codecs
+        .filter(([, type]) => {
+          try {
+            return MediaSource.isTypeSupported(type)
+          } catch {
+            return false
+          }
+        })
+        .map(([name]) => name)
+      out.push({
+        label: 'Decodable codecs',
+        value: supported.length ? supported.join(', ') : 'none reported',
+        verdict: supported.includes('H.264') ? 'ok' : 'bad',
+      })
+      out.push({
+        label: 'MediaSource available',
+        value: 'yes',
+        verdict: 'ok',
+      })
+    } else {
+      out.push({ label: 'MediaSource available', value: 'no', verdict: 'bad' })
+    }
+
+    setRows(out)
+    setBusy(false)
+  }
+
+  async function copy() {
+    const text = rows.map((r) => `${r.label}: ${r.value}`).join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <h2 className="text-[16px] font-semibold text-fg">Playback diagnostics</h2>
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Run this <strong className="font-medium text-fg">on the device that has the problem</strong>{' '}
+        — the phone, not this PC — then press Copy and send the result. It reports the things that
+        differ between an Android WebView and Safari, which is where the Bilibili failure lives.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={run}
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-lg bg-[#065fd4] px-4 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+        >
+          {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+          Run diagnostics
+        </button>
+        {rows.length > 0 ? (
+          <button
+            type="button"
+            onClick={copy}
+            className="rounded-lg bg-chip px-4 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover"
+          >
+            {copied ? 'Copied' : 'Copy results'}
+          </button>
+        ) : null}
+      </div>
+
+      {rows.length > 0 ? (
+        <dl className="mt-4 space-y-2">
+          {rows.map((r) => (
+            <div key={r.label} className="flex flex-col gap-0.5 border-b border-line pb-2 last:border-0">
+              <dt className="text-[12px] font-medium text-fg2">{r.label}</dt>
+              <dd
+                className={classNames(
+                  'break-words text-[13px]',
+                  r.verdict === 'ok' ? 'text-[#2ba640]' : r.verdict === 'bad' ? 'text-[#ff4e45]' : 'text-fg',
+                )}
+              >
+                {r.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </section>
   )
 }
 
