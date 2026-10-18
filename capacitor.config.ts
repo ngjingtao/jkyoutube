@@ -29,6 +29,14 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     captureInput: true,
     webContentsDebuggingEnabled: false,
+
+    // The stock Android WebView user-agent contains a "; wv" token that marks
+    // it as a WebView. Several site firewalls treat that as a bot signal, and
+    // third-party embedded players can refuse to serve video as a result. This
+    // presents the app as ordinary Chrome for Android instead, which is what a
+    // real phone browser sends.
+    overrideUserAgent:
+      'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
   },
 }
 
