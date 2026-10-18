@@ -116,7 +116,13 @@ export function Sidebar({
   expanded: boolean
   onNavigate?: () => void
 }) {
-  const { channels, subscriptions } = useLibrary()
+  const { channels, subscriptions, getChannelVideos } = useLibrary()
+
+  // Only list channels that still have visible videos, so hiding the sample
+  // library never leaves a subscription link pointing at an empty page.
+  const subscribedChannels = channels.filter(
+    (c) => subscriptions.includes(c.id) && getChannelVideos(c.id).length > 0,
+  )
 
   if (!expanded) {
     return (
@@ -164,20 +170,18 @@ export function Sidebar({
 
       <div>
         <SectionHeader label="Subscriptions" />
-        {channels
-          .filter((c) => subscriptions.includes(c.id))
-          .map((c) => (
-            <Link
-              key={c.id}
-              to={`/channel/${c.id}`}
-              onClick={onNavigate}
-              className="mx-3 flex h-10 items-center gap-6 rounded-lg px-3 hover:bg-hover"
-            >
-              <ChannelAvatar channel={c} size={24} />
-              <span className="truncate text-[14px]">{c.name}</span>
-            </Link>
-          ))}
-        {subscriptions.length === 0 ? (
+        {subscribedChannels.map((c) => (
+          <Link
+            key={c.id}
+            to={`/channel/${c.id}`}
+            onClick={onNavigate}
+            className="mx-3 flex h-10 items-center gap-6 rounded-lg px-3 hover:bg-hover"
+          >
+            <ChannelAvatar channel={c} size={24} />
+            <span className="truncate text-[14px]">{c.name}</span>
+          </Link>
+        ))}
+        {subscribedChannels.length === 0 ? (
           <p className="px-6 py-2 text-[13px] text-fg2">No subscriptions yet</p>
         ) : null}
       </div>

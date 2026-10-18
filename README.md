@@ -74,6 +74,9 @@ Same steps as the iPad using **Chrome** → *Install app*. The proper APK comes 
 - [x] Bulk add from a pasted list
 - [x] Editable library with per-row refetch, preview and delete
 - [x] Export to JSON
+- [x] "What the app shows" control: Auto / Only my videos / Only samples.
+      Auto hides the placeholder library the moment you add your first video,
+      so the app never mixes someone else's content into yours.
 
 **Not built yet**
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchOEmbed, useLibrary } from '../store/library'
+import type { LibraryMode } from '../store/library'
 import { classNames, parseYouTubeId, timeAgo, youTubeThumbnail } from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
 import { AlertIcon, CheckIcon, CloseIcon, PlusIcon, SpinnerIcon } from '../components/icons'
@@ -129,6 +130,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
         </div>
       </div>
 
+      <LibraryContentsCard />
+
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <AddSingleVideo categories={categories} addVideo={addVideo} />
         <BulkAdd categories={categories} addVideo={addVideo} />
@@ -147,6 +150,86 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
 }
 
 /* ------------------------------------------------------------------ adding */
+
+/**
+ * Controls whether the bundled placeholder library is shown.
+ *
+ * This matters because the placeholders are hardcoded, so without a control
+ * here the app could never show *only* your own content.
+ */
+function LibraryContentsCard() {
+  const { libraryMode, setLibraryMode, sampleVideoCount, customVideos } = useLibrary()
+
+  const options: Array<{ value: LibraryMode; label: string; hint: string }> = [
+    {
+      value: 'auto',
+      label: 'Auto',
+      hint: 'Placeholders show only until you add your first video.',
+    },
+    {
+      value: 'mine',
+      label: 'Only my videos',
+      hint: 'Hide every placeholder. The app shows your library and nothing else.',
+    },
+    {
+      value: 'samples',
+      label: 'Only samples',
+      hint: 'Ignore what you added, for comparing against the original look.',
+    },
+  ]
+
+  const showing =
+    libraryMode === 'samples'
+      ? `${sampleVideoCount} placeholder videos`
+      : libraryMode === 'mine'
+        ? `${customVideos.length} of your videos`
+        : customVideos.length === 0
+          ? `${sampleVideoCount} placeholder videos (nothing added yet)`
+          : `${customVideos.length} of your videos`
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <h2 className="text-[16px] font-semibold text-fg">What the app shows</h2>
+      <p className="mt-1 text-[13px] text-fg2">
+        Currently showing: <strong className="font-medium text-fg">{showing}</strong>
+      </p>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-3">
+        {options.map((o) => {
+          const active = o.value === libraryMode
+          return (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => setLibraryMode(o.value)}
+              className={classNames(
+                'flex-1 rounded-lg border px-3 py-2 text-left transition-colors',
+                active
+                  ? 'border-[#065fd4] bg-[#065fd4]/10'
+                  : 'border-line hover:bg-chip',
+              )}
+            >
+              <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
+                {active ? <CheckIcon size={16} /> : <span className="inline-block h-4 w-4" />}
+                {o.label}
+              </span>
+              <span className="mt-0.5 block pl-6 text-[12px] leading-4 text-fg2">{o.hint}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <p className="mt-3 flex items-start gap-2 text-[12px] leading-5 text-fg2">
+        <AlertIcon size={16} className="mt-px shrink-0" />
+        <span>
+          Until the Supabase database is connected, this setting and your added videos live in
+          <strong className="font-medium text-fg"> this browser only</strong>. On the iPad the app
+          will still show the placeholders — not a bug, just the missing database.
+        </span>
+      </p>
+    </section>
+  )
+}
 
 function AddSingleVideo({
   categories,

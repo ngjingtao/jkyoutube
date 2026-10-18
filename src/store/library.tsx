@@ -25,6 +25,16 @@ import type { Category, Channel, Playlist, Video } from '../types'
 
 export type Reaction = 'like' | 'dislike' | null
 
+/**
+ * What the app is allowed to show.
+ *
+ * - `auto`    samples appear only until the first video is added. Keeps a fresh
+ *             install from looking broken, then gets out of the way.
+ * - `mine`    never show the bundled placeholders — your library only.
+ * - `samples` placeholders only, ignoring anything added. Useful for comparing.
+ */
+export type LibraryMode = 'auto' | 'mine' | 'samples'
+
 export interface NewVideoInput {
   url: string
   title?: string
@@ -78,6 +88,9 @@ interface LibraryValue {
 
   /* ---------------------------------------------------------- admin side */
   customVideos: Video[]
+  sampleVideoCount: number
+  libraryMode: LibraryMode
+  setLibraryMode: (mode: LibraryMode) => void
   addVideo: (input: NewVideoInput) => AddVideoResult
   updateVideo: (id: string, patch: Partial<Video>) => void
   removeVideo: (id: string) => void
@@ -140,15 +153,28 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   )
   const [customVideos, setCustomVideos] = useLocalStorage<Video[]>('jk.videos', [])
   const [customChannels, setCustomChannels] = useLocalStorage<Channel[]>('jk.channels', [])
+  const [libraryMode, setLibraryMode] = useLocalStorage<LibraryMode>('jk.libraryMode', 'auto')
 
   const channels = useMemo(
     () => [...seedChannels, ...customChannels],
     [customChannels],
   )
 
+  /** Decides whether the bundled placeholder library takes part at all. */
+  const includeSamples = useMemo(() => {
+    if (libraryMode === 'samples') return true
+    if (libraryMode === 'mine') return false
+    return customVideos.length === 0
+  }, [libraryMode, customVideos.length])
+
   const allVideos = useMemo(
-    () => [...seedVideos, ...customVideos],
-    [customVideos],
+    () =>
+      libraryMode === 'samples'
+        ? seedVideos
+        : includeSamples
+          ? [...seedVideos, ...customVideos]
+          : customVideos,
+    [includeSamples, libraryMode, customVideos],
   )
 
   const videos = useMemo(
@@ -379,6 +405,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     isSubscribed,
     toggleSubscribe,
     customVideos,
+    sampleVideoCount: seedVideos.length,
+    libraryMode,
+    setLibraryMode,
     addVideo,
     updateVideo,
     removeVideo,
