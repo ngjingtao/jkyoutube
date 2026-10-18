@@ -25,6 +25,7 @@ jobs:
   apk:
     name: Build APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       # Override with a repository variable of the same name:
@@ -55,8 +56,40 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # The ubuntu-latest image already ships the Android SDK, so this uses it
+      # directly rather than depending on a third-party installer action (which
+      # is what failed here previously). It only tops up the one platform this
+      # project compiles against, and prints what it found so a future failure
+      # is diagnosable from the log alone.
+      - name: Prepare Android SDK
+        run: |
+          set -uo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK root: $SDK"
+          ls "$SDK" 2>/dev/null || echo "!! SDK root not found"
+
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found under $SDK/cmdline-tools"
+            exit 1
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+
+          # Accept licences so the Android Gradle Plugin may also auto-download
+          # anything still missing during the build.
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+
+          echo "--- before ---"
+          "$SDKMANAGER" --list_installed 2>/dev/null | sed -n '1,25p' || true
+
+          "$SDKMANAGER" --install "platforms;android-36" "platform-tools" || \
+            echo "!! could not install platform 36 — relying on AGP auto-download"
+
+          echo "--- after ---"
+          "$SDKMANAGER" --list_installed 2>/dev/null | sed -n '1,25p' || true
+
+          # Gradle finds the SDK via local.properties. It is gitignored.
+          echo "sdk.dir=$SDK" > android/local.properties
 
       - name: Sync web assets into the Android project
         run: npx cap sync android
@@ -67,9 +100,10 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Rename artefact
+      - name: Collect APK
         run: |
           mkdir -p out
+          find android/app/build/outputs/apk -name '*.apk' -print
           cp android/app/build/outputs/apk/debug/app-debug.apk \
              "out/jkyoutube-${GITHUB_SHA::7}.apk"
           ls -lh out
@@ -81,3 +115,13 @@ jobs:
           path: out/*.apk
           if-no-files-found: error
           retention-days: 90
+
+      # A failed Gradle build is far easier to diagnose with the report attached.
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-reports
+          path: android/app/build/reports/**
+          if-no-files-found: ignore
+          retention-days: 14
