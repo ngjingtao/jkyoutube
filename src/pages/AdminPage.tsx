@@ -1250,6 +1250,8 @@ function MyLibrary({
         publishedAt: meta.publishedAt,
         thumbnailUrl: meta.thumbnailUrl,
         isLive: meta.isLive,
+        // Real figures have arrived, so the view line may now be shown.
+        statsUnknown: false,
       })
       const ch = channelMap.get(meta.channelId)
       if (ch) {

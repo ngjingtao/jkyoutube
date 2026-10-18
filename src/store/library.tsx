@@ -514,7 +514,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
           viewCount: input.viewCount ?? 0,
           likeCount: input.likeCount ?? 0,
           isLive: input.isLive ?? false,
-          statsUnknown: Boolean(bilibiliRef) && input.viewCount === undefined,
+          // Without real statistics we must not print "No views • just now":
+          // that is the exact string YouTube uses for a brand new video, and it
+          // looks plainly wrong on one that was uploaded years ago. Omitting the
+          // line is the honest option. "Refresh all from YouTube" clears this
+          // once a Data API key is configured.
+          statsUnknown: input.viewCount === undefined,
           status: 'published',
         },
       }
