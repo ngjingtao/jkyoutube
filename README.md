@@ -194,6 +194,47 @@ provides the database, auth and API that never sleep either.
 
 ---
 
+## Android APK
+
+The APK is a thin shell around the deployed web app, so content and UI changes
+ship without rebuilding it — only the native shell (icon, name, URL) needs a new
+build.
+
+### Getting the APK
+
+1. Push to `main` (or run **Actions → Build Android APK → Run workflow**).
+2. Open the run in the **Actions** tab.
+3. Download the **`jkyoutube-apk`** artefact from the bottom of the run page.
+4. On the phone, open the downloaded `.apk` and allow installing from unknown
+   sources when prompted.
+
+The APK is **debug-signed**, which is fine for sideloading. It is not suitable
+for the Play Store, which needs a release key.
+
+### Pointing the APK at a different address
+
+The build reads a repository variable named `APP_URL`, falling back to
+`https://jkyoutube.onrender.com`. To change it without editing code:
+
+**Settings → Secrets and variables → Actions → Variables → New variable**, name
+`APP_URL`, value your address. Then re-run the workflow.
+
+### Why `targetSdkVersion` is 34
+
+Android 15+ forces edge-to-edge layout for apps targeting SDK 35 and above,
+which draws the WebView underneath the status bar and hides part of the header.
+The one-release opt-out is ignored at SDK 36, so targeting 34 is the only way to
+guarantee correct layout without depending on `env(safe-area-inset-*)` support in
+Android WebView. Sideloaded APKs are unaffected by Play Store target-SDK rules.
+
+### Native behaviour
+
+- App name and icon are the YouTube mark, with an adaptive icon (red background,
+  white play triangle) and a matching dark splash screen.
+- The hardware back button walks back through history and only exits from Home.
+- Capacitor already disables the user-gesture requirement for media, so video
+  autoplay works, and it handles `onShowCustomView` so fullscreen works.
+
 ## A note on scope
 
 This app mirrors YouTube's interface so the viewer simply uses it instead of the real

@@ -59,7 +59,10 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   }
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 flex h-14 items-center gap-2 bg-bg px-4">
+    <header
+      className="fixed inset-x-0 top-0 z-50 flex items-center gap-2 bg-bg px-4"
+      style={{ height: 'var(--app-header-h)', paddingTop: 'var(--app-safe-top)' }}
+    >
       {/* -------------------------------------------------- left: logo */}
       <div className="flex min-w-0 items-center gap-4 md:flex-1">
         <button

@@ -1,0 +1,83 @@
+name: Build Android APK
+
+# Builds a sideloadable APK of the app. The APK is a thin shell around the
+# deployed web app, so it only needs rebuilding when the native shell changes
+# (icon, name, URL) — not when content or UI changes.
+#
+# Download the result from the run's "Artifacts" section.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'public/icons/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    env:
+      # Override with a repository variable of the same name:
+      #   Settings -> Secrets and variables -> Actions -> Variables
+      APP_URL: ${{ vars.APP_URL || 'https://jkyoutube.onrender.com' }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `webDir` must exist before Capacitor will sync, even though the app
+      # loads the remote URL at runtime.
+      - name: Build web assets
+        run: npm run build
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Sync web assets into the Android project
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename artefact
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "out/jkyoutube-${GITHUB_SHA::7}.apk"
+          ls -lh out
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jkyoutube-apk
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 90

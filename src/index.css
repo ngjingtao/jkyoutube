@@ -25,6 +25,18 @@
   --yt-brand: #ff0000;
   --yt-thumb-bg: #e5e5e5;
   --yt-skeleton: rgba(0, 0, 0, 0.08);
+
+  /* ---------------------------------------------------------------- layout
+     Height of the fixed header, including the device's status-bar inset.
+
+     Zero on desktop and on Android (which does not use edge-to-edge, see
+     android/variables.gradle). Non-zero inside an installed iOS PWA, where
+     apple-mobile-web-app-status-bar-style is black-translucent and the
+     translucent status bar would otherwise overlay the header.
+  */
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-header-h: calc(56px + var(--app-safe-top));
 }
 
 .dark {

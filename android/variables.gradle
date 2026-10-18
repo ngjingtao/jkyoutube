@@ -1,0 +1,30 @@
+ext {
+    minSdkVersion = 24
+    compileSdkVersion = 36
+
+    // Deliberately 34, not 36.
+    //
+    // Android 15+ forces edge-to-edge layout for apps targeting SDK 35 and
+    // above, which makes the WebView draw underneath the status bar — the app's
+    // fixed 56px header would be partly hidden behind the clock and battery.
+    // The one-release opt-out (windowOptOutEdgeToEdgeEnforcement) is ignored at
+    // SDK 36, so targeting 34 is the only way to guarantee correct layout
+    // without depending on env(safe-area-inset-*) support in Android WebView.
+    //
+    // Sideloaded APKs are unaffected by the Play Store's target-SDK
+    // requirements. If you ever publish to Play, raise this to 36 and confirm
+    // on a real device that the header clears the status bar.
+    targetSdkVersion = 34
+
+    androidxActivityVersion = '1.11.0'
+    androidxAppCompatVersion = '1.7.1'
+    androidxCoordinatorLayoutVersion = '1.3.0'
+    androidxCoreVersion = '1.17.0'
+    androidxFragmentVersion = '1.8.9'
+    coreSplashScreenVersion = '1.2.0'
+    androidxWebkitVersion = '1.14.0'
+    junitVersion = '4.13.2'
+    androidxJunitVersion = '1.3.0'
+    androidxEspressoCoreVersion = '3.7.0'
+    cordovaAndroidVersion = '14.0.1'
+}

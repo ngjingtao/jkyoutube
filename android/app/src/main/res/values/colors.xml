@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Overrides Capacitor's defaults (indigo #3F51B5 / pink #FF4081), which would
+      otherwise colour the status bar and any ripple indigo — an obvious mismatch
+      against the red brand.
+    -->
+    <color name="colorPrimary">#FF0000</color>
+    <color name="colorPrimaryDark">#0F0F0F</color>
+    <color name="colorAccent">#FF0000</color>
+</resources>

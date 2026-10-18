@@ -40,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <TopBar onToggleSidebar={handleToggle} />
 
       {isMedium ? (
-        <div className="fixed bottom-0 left-0 top-14 z-40 bg-bg">
+        <div className="fixed bottom-0 left-0 top-[var(--app-header-h)] z-40 bg-bg">
           <Sidebar expanded={expanded} />
         </div>
       ) : null}
@@ -51,15 +51,20 @@ export function AppShell({ children }: { children: ReactNode }) {
             type="button"
             aria-label="Close guide"
             onClick={() => setDrawerOpen(false)}
-            className="fixed inset-0 top-14 z-40 bg-black/50"
+            className="fixed inset-0 top-[var(--app-header-h)] z-40 bg-black/50"
           />
-          <div className="fixed bottom-0 left-0 top-14 z-50 w-60 overflow-y-auto bg-bg">
+          <div className="fixed bottom-0 left-0 top-[var(--app-header-h)] z-50 w-60 overflow-y-auto bg-bg">
             <Sidebar expanded onNavigate={() => setDrawerOpen(false)} />
           </div>
         </>
       ) : null}
 
-      <main className={classNames('pt-14', isMedium ? (expanded ? 'ml-60' : 'ml-[72px]') : 'ml-0')}>
+      <main
+        className={classNames(
+          'pt-[var(--app-header-h)] pb-[var(--app-safe-bottom)]',
+          isMedium ? (expanded ? 'ml-60' : 'ml-[72px]') : 'ml-0',
+        )}
+      >
         {children}
       </main>
     </>
