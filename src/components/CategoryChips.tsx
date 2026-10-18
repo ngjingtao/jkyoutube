@@ -15,7 +15,7 @@ export function CategoryChips({
   onChange: (id: string) => void
 }) {
   return (
-    <div className="no-scrollbar sticky top-[var(--app-header-h)] z-30 flex gap-3 overflow-x-auto bg-bg px-4 py-3 md:px-6">
+    <div className="jk-chips no-scrollbar sticky top-[var(--app-header-h)] z-30 flex gap-3 overflow-x-auto bg-bg px-4 py-3 md:px-6">
       {categories.map((c) => {
         const isActive = c.id === active
         return (

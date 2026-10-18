@@ -1097,8 +1097,16 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
           <span className="text-[12px] font-medium text-fg2">Bilibili link</span>
           <input
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.bilibili.com/video/BV1GJ411x7h7"
+            onChange={(e) => {
+              const next = e.target.value
+              setUrl(next)
+              // The Bilibili app's Share button produces text shaped like
+              // "【video title】 https://b23.tv/xxxx". Pulling the title out of
+              // that saves typing it, which is the main effort in adding one.
+              const fromShare = next.match(/[【\[]([^】\]]{2,140})[】\]]/)
+              if (fromShare && !title) setTitle(fromShare[1].trim())
+            }}
+            placeholder="Paste the link — or the whole Share text from the Bilibili app"
             className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
           />
         </label>
@@ -1110,100 +1118,97 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
           </p>
         ) : url && shortLink ? (
           <p className="text-[12px] text-[#ff9d00]">
-            Short b23.tv links cannot be resolved in the browser. Open it, then copy the full
-            bilibili.com address.
+            That is a short b23.tv link, which cannot be resolved in a browser. Open it, then copy
+            the full <span className="text-fg">bilibili.com/video/BV…</span> address. (If you
+            pasted Share text, the title has still been filled in for you.)
           </p>
         ) : null}
 
         <label className="flex flex-col gap-1">
-          <span className="text-[12px] font-medium text-fg2">Title (required)</span>
+          <span className="text-[12px] font-medium text-fg2">
+            Title <span className="text-[#ff9d00]">(required — Bilibili will not give it to us)</span>
+          </span>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="What the video is called"
+            placeholder="Copy it from the Bilibili tab, or paste the Share text above"
             className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
           />
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Channel</span>
-            <input
-              value={authorName}
-              onChange={(e) => setAuthorName(e.target.value)}
-              placeholder="Uploader name"
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Category</span>
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-fg2">Category</span>
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Duration (optional)</span>
-            <input
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              placeholder="12:34 or 1:02:03"
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Thumbnail URL (optional)</span>
-            <input
-              value={thumbnailUrl}
-              onChange={(e) => setThumbnailUrl(e.target.value)}
-              placeholder="https://i0.hdslb.com/…"
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            />
-          </label>
-        </div>
+        <details className="rounded-lg border border-line p-3">
+          <summary className="cursor-pointer text-[13px] font-medium text-fg">
+            Everything else is optional
+          </summary>
+          <p className="mt-2 text-[12px] leading-5 text-fg2">
+            Skip these and the app prints no view line rather than a false “0 views • just now”,
+            and draws a neat stand-in thumbnail instead of an empty box.
+          </p>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Views (optional)</span>
-            <input
-              value={views}
-              onChange={(e) => setViews(e.target.value)}
-              placeholder="125000"
-              inputMode="numeric"
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[12px] font-medium text-fg2">Upload date (optional)</span>
-            <input
-              type="date"
-              value={published}
-              onChange={(e) => setPublished(e.target.value)}
-              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
-            />
-          </label>
-        </div>
-
-        <p className="text-[12px] leading-5 text-fg2">
-          Leave views and the date blank and the app prints no view line at all, rather than a
-          false “0 views • just now”.
-        </p>
-
-        <p className="text-[12px] leading-5 text-fg2">
-          For the thumbnail: open the video on Bilibili, right-click the image, and choose
-          <span className="text-fg"> Copy image address</span>. Leave it blank and a tidy stand-in
-          card is generated instead.
-        </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-fg2">Channel</span>
+              <input
+                value={authorName}
+                onChange={(e) => setAuthorName(e.target.value)}
+                placeholder="Uploader name"
+                className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-fg2">Duration</span>
+              <input
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                placeholder="12:34 or 1:02:03"
+                className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className="text-[12px] font-medium text-fg2">Thumbnail URL</span>
+              <input
+                value={thumbnailUrl}
+                onChange={(e) => setThumbnailUrl(e.target.value)}
+                placeholder="Right-click the image on Bilibili → Copy image address"
+                className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-fg2">Views</span>
+              <input
+                value={views}
+                onChange={(e) => setViews(e.target.value)}
+                placeholder="125000"
+                inputMode="numeric"
+                className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-fg2">Upload date</span>
+              <input
+                type="date"
+                value={published}
+                onChange={(e) => setPublished(e.target.value)}
+                className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+              />
+            </label>
+          </div>
+        </details>
 
         <button
           type="submit"

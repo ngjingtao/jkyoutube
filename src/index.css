@@ -154,6 +154,69 @@
   display: none;
 }
 
+/* ---------------------------------------------------------------------------
+   Fill-screen playback.
+
+   Built for iOS, where the Fullscreen API simply does not exist for elements
+   and video fullscreen inside a cross-origin iframe does not work in an
+   installed web app. There is no way to ask the platform for real fullscreen,
+   so this expands the player to the whole viewport with CSS instead: the header,
+   guide and page content are hidden, the player is pinned over everything, and
+   the player's own two buttons let the viewer get back out.
+
+   Only shown when `document.fullscreenEnabled` is false, i.e. exactly where the
+   native API cannot help.
+   --------------------------------------------------------------------------- */
+
+body.jk-fill-screen {
+  overflow: hidden;
+}
+
+body.jk-fill-screen header,
+body.jk-fill-screen .jk-guide,
+body.jk-fill-screen .jk-chips {
+  display: none !important;
+}
+
+body.jk-fill-screen .jk-main {
+  margin-left: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* `!important` is required to beat the inline aspect-ratio on the wrapper. */
+body.jk-fill-screen .jk-player-fill {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 1000 !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Kept above the pinned player, and clear of the iOS status bar. */
+.jk-fill-exit {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  right: calc(8px + env(safe-area-inset-right, 0px));
+  z-index: 1001;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  backdrop-filter: blur(6px);
+}
+
+.jk-fill-exit:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
 /* Two-line clamp used by video titles, exactly like YouTube */
 .yt-clamp-2 {
   display: -webkit-box;

@@ -12,9 +12,11 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  CloseIcon,
   DislikeFilledIcon,
   DislikeIcon,
   DownloadIcon,
+  FullscreenIcon,
   LikeFilledIcon,
   LikeIcon,
   MoreVerticalIcon,
@@ -93,13 +95,32 @@ export function WatchPage() {
   const video = getVideo(id)
   const [descOpen, setDescOpen] = useState(false)
   const [autoplayNext, setAutoplayNext] = useState(true)
+  const [fillScreen, setFillScreen] = useState(false)
 
   const queue = useMemo(() => (video ? upNext(video.id, 20) : []), [video, upNext])
+
+  /**
+   * Whether to offer the in-app fill-screen mode.
+   *
+   * Only where the platform cannot do it natively. iOS never supports the
+   * Fullscreen API for elements, and video fullscreen inside a cross-origin
+   * iframe does not work in an installed web app — so on the iPad the player's
+   * own button does nothing and this is the only way to get a big picture.
+   */
+  const canFillScreen = !document.fullscreenEnabled
+
+  // Fill-screen hides the header and guide by classing <body>, which is the only
+  // thing that can reach outside this component's subtree.
+  useEffect(() => {
+    document.body.classList.toggle('jk-fill-screen', fillScreen)
+    return () => document.body.classList.remove('jk-fill-screen')
+  }, [fillScreen])
 
   // Record history whenever the watched video changes.
   useEffect(() => {
     if (video) addToHistory(video.id)
     setDescOpen(false)
+    setFillScreen(false)
     window.scrollTo({ top: 0 })
   }, [video, addToHistory])
 
@@ -126,10 +147,23 @@ export function WatchPage() {
 
   return (
     <div className="mx-auto max-w-[1754px] px-4 pb-16 pt-6 md:px-6">
+      {fillScreen ? (
+        <button type="button" className="jk-fill-exit" onClick={() => setFillScreen(false)}>
+          <CloseIcon size={18} />
+          Exit full screen
+        </button>
+      ) : null}
+
       <div className="flex flex-col gap-6 xl:flex-row">
         {/* ------------------------------------------------ primary column */}
         <div className="min-w-0 flex-1">
-          <div className="overflow-hidden rounded-xl bg-black" style={{ aspectRatio: '16 / 9' }}>
+          <div
+            className={classNames(
+              'overflow-hidden rounded-xl bg-black',
+              fillScreen && 'jk-player-fill',
+            )}
+            style={{ aspectRatio: '16 / 9' }}
+          >
             {video.sourceType === 'youtube' && video.youtubeId ? (
               <YouTubePlayer
                 videoId={video.youtubeId}
@@ -200,6 +234,13 @@ export function WatchPage() {
                 <ShareIcon size={22} />
                 Share
               </PillButton>
+
+              {canFillScreen ? (
+                <PillButton label="Fill the screen" onClick={() => setFillScreen(true)}>
+                  <FullscreenIcon size={22} />
+                  Full screen
+                </PillButton>
+              ) : null}
 
               <PillButton label="Download">
                 <DownloadIcon size={22} />
