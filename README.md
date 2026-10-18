@@ -68,6 +68,32 @@ Same steps as the iPad using **Chrome** → *Install app*. The proper APK comes 
 - [x] Subscriptions, Trending, History, Liked, Downloads, Library feeds
 - [x] Dark and light themes, remembered across launches
 - [x] PWA manifest, app icons, iOS standalone meta tags
+- [x] No outbound link to youtube.com anywhere in the viewer UI, plus a click
+      shield over the embedded player's own title bar
+
+### Keeping viewers inside the app
+
+An outbound link to the real YouTube is a one-tap escape, so there are none.
+
+- The "Watch on YouTube" button that used to appear when a video could not be
+  embedded has been **removed**. It now reads "Video unavailable", the same way
+  YouTube's own unavailable state does.
+- The unavailable message no longer says *"the owner does not allow this video to
+  be played outside of YouTube"* — that phrasing gave away that the video was
+  embedded.
+- A transparent **click shield** covers the top 18% of the embedded player. It
+  exists because YouTube's player draws its own title overlay there, and that
+  title is a link to youtube.com; its Share button also hands out a youtube.com
+  URL. No player parameter removes either. Clicks in that band are forwarded to
+  play/pause, which is what tapping the video does anyway.
+
+**What cannot be removed.** The shield does not follow the player into
+fullscreen, and YouTube's settings (gear) menu still contains "Copy video URL"
+entries. Those live inside YouTube's iframe; removing them would mean re-hosting
+the video streams, which this project deliberately does not do.
+
+Because of that, the real protection is at the device level: block `youtube.com`
+and the YouTube app using **Screen Time** (iPad) or **Family Link** (Android).
 
 **Admin panel**
 - [x] Preview passcode gate

@@ -114,11 +114,10 @@ function describeError(code: number): PlayerError {
       return { code, network: false, message: 'This video is unavailable.' }
     case 101:
     case 150:
-      return {
-        code,
-        network: false,
-        message: 'The owner does not allow this video to be played outside of YouTube.',
-      }
+      // The owner disabled embedding. Deliberately worded the way YouTube's own
+      // unavailable state reads, with no reference to embedding or "outside of
+      // YouTube" — that phrasing would reveal the video is being embedded.
+      return { code, network: false, message: 'This video is unavailable.' }
     default:
       return { code, network: false, message: 'Something went wrong while playing this video.' }
   }
@@ -147,6 +146,7 @@ export function YouTubePlayer({
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const playerRef = useRef<YouTubePlayerInstance | null>(null)
+  const playingRef = useRef(false)
   const [failed, setFailed] = useState<PlayerError | null>(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -200,7 +200,10 @@ export function YouTubePlayer({
               }
             },
             onStateChange: (e: { data: number }) => {
-              if (window.YT && e.data === window.YT.PlayerState.ENDED) endedRef.current?.()
+              if (window.YT) {
+                playingRef.current = e.data === window.YT.PlayerState.PLAYING
+                if (e.data === window.YT.PlayerState.ENDED) endedRef.current?.()
+              }
             },
             onError: (e: { data: number }) => {
               const err = describeError(e.data)
@@ -254,30 +257,62 @@ export function YouTubePlayer({
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
 
+  /**
+   * Toggles playback. Used by the click shield below.
+   */
+  const togglePlayback = useCallback(() => {
+    const player = playerRef.current
+    if (!player) return
+    try {
+      if (playingRef.current) player.pauseVideo()
+      else player.playVideo()
+    } catch {
+      /* player not ready yet */
+    }
+  }, [])
+
   if (failed) {
-    return (
-      <PlayerFallback videoId={videoId} error={failed} onRetry={retry} className={className} />
-    )
+    return <PlayerFallback error={failed} onRetry={retry} className={className} />
   }
 
   return (
-    <div className={className}>
+    <div className={`relative ${className ?? ''}`}>
       <div ref={hostRef} className="h-full w-full" />
+
+      {/*
+        YouTube's embedded player draws its own title overlay across the top,
+        and that title is a clickable link to youtube.com. Its Share button also
+        hands out a youtube.com URL. No player parameter removes either.
+
+        This transparent strip swallows clicks in that band and forwards them to
+        play/pause instead — which is what tapping the video does anyway, so no
+        functionality is lost. It blocks the one-tap escape to the real YouTube.
+
+        Limitation: it cannot follow the player into fullscreen, because the
+        iframe then covers the entire screen and this element is left behind.
+      */}
+      <button
+        type="button"
+        onClick={togglePlayback}
+        aria-label="Play or pause"
+        className="absolute inset-x-0 top-0 z-10 h-[18%] min-h-[52px] cursor-default bg-transparent"
+      />
     </div>
   )
 }
 
 /**
- * Mirrors YouTube's black unavailable state rather than leaving an empty box.
- * Network failures offer a retry; unavailable videos offer the source link.
+ * Mirrors YouTube's own black unavailable state.
+ *
+ * There is deliberately **no "Watch on YouTube" link here**: any outbound link
+ * to youtube.com is a one-tap escape from the app, which defeats the entire
+ * point. The admin library still records the source URL if you need it.
  */
 export function PlayerFallback({
-  videoId,
   error,
   onRetry,
   className,
 }: {
-  videoId: string
   error?: PlayerError
   onRetry?: () => void
   className?: string
@@ -296,27 +331,15 @@ export function PlayerFallback({
       <p className="max-w-md text-[13px] leading-5 text-white/70">
         {error?.message ?? 'This video cannot be played here.'}
       </p>
-      <div className="mt-1 flex items-center gap-2">
-        {isNetwork && onRetry ? (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="rounded-full bg-white px-4 py-2 text-[14px] font-medium text-black hover:brightness-90"
-          >
-            Try again
-          </button>
-        ) : null}
-        {!isNetwork ? (
-          <a
-            href={`https://www.youtube.com/watch?v=${videoId}`}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full bg-white/10 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/20"
-          >
-            Watch on YouTube
-          </a>
-        ) : null}
-      </div>
+      {isNetwork && onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-1 rounded-full bg-white px-4 py-2 text-[14px] font-medium text-black hover:brightness-90"
+        >
+          Try again
+        </button>
+      ) : null}
     </div>
   )
 }
