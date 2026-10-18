@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Capacitor } from '@capacitor/core'
-import { getCookieState } from '../lib/native'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
 import { signIn, signOut } from '../lib/remote'
@@ -238,35 +237,31 @@ function DiagnosticsCard() {
     })
     out.push({ label: 'User agent', value: navigator.userAgent, verdict: 'info' })
 
-    // Third-party cookies: the prime suspect.
-    const cookieState = getCookieState()
-    if (cookieState) {
+    // Confirms the user-agent override actually reached the WebView. A desktop
+    // string means the APK is being served the same embedded Bilibili player as
+    // Chrome and the iPad, rather than the mobile one.
+    const ua = navigator.userAgent
+    const wantsDesktop = Capacitor.isNativePlatform()
+    const looksDesktop = !/Mobile/i.test(ua)
+    if (wantsDesktop) {
       out.push({
-        label: 'Third-party cookie fix applied',
-        value: cookieState.applied ? 'yes' : 'NO — the native call did not take effect',
-        verdict: cookieState.applied ? 'ok' : 'bad',
-      })
-      out.push({
-        label: 'WebView present when applied',
-        value: String(cookieState.hasWebView),
-        verdict: cookieState.hasWebView ? 'ok' : 'bad',
-      })
-      out.push({
-        label: 'CookieManager accepting cookies',
-        value: String(cookieState.acceptingCookies),
-        verdict: cookieState.acceptingCookies ? 'ok' : 'bad',
-      })
-    } else {
-      out.push({
-        label: 'Third-party cookie fix',
-        value: 'not applicable (only runs in the native shell)',
-        verdict: 'info',
+        label: 'Desktop user agent applied',
+        value: looksDesktop ? 'yes' : 'no — still falling back to the stock WebView agent',
+        verdict: looksDesktop ? 'ok' : 'bad',
       })
     }
+
     out.push({
       label: 'navigator.cookieEnabled',
       value: String(navigator.cookieEnabled),
       verdict: navigator.cookieEnabled ? 'ok' : 'bad',
+    })
+    out.push({
+      label: 'Third-party cookies usable in this WebView',
+      value: typeof document.hasStorageAccess === 'function'
+        ? 'storage access API present'
+        : 'storage access API absent (cannot be probed further)',
+      verdict: 'info',
     })
 
     // Can we reach Bilibili at all from this device?
