@@ -32,6 +32,13 @@ jobs:
       #   Settings -> Secrets and variables -> Actions -> Variables
       APP_URL: ${{ vars.APP_URL || 'https://jkyoutube.onrender.com' }}
 
+      # Set these three as repository SECRETS to get a stable, installable-over
+      # signed build. Without them the workflow still succeeds, but with a debug
+      # key that changes every run.
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -94,18 +101,35 @@ jobs:
       - name: Sync web assets into the Android project
         run: npx cap sync android
 
-      - name: Build debug APK
+      # Decoded to a file outside the repository, then handed to Gradle through
+      # the environment. The keystore itself never touches the working tree.
+      - name: Set up release signing
+        if: env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_STORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != ''
+        run: |
+          set -euo pipefail
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "keystore bytes: $(wc -c < "$RUNNER_TEMP/release.jks")"
+          echo "JKY_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "Building a RELEASE APK signed with the stable key."
+
+      - name: Build APK
         working-directory: android
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          if [ -n "${JKY_KEYSTORE:-}" ]; then
+            ./gradlew assembleRelease --no-daemon --stacktrace
+          else
+            echo "::warning::No signing secrets found — building a debug APK. You will need to uninstall the previous app before installing this one."
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          fi
 
       - name: Collect APK
         run: |
           mkdir -p out
           find android/app/build/outputs/apk -name '*.apk' -print
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
-             "out/jkyoutube-${GITHUB_SHA::7}.apk"
+          APK="$(find android/app/build/outputs/apk -name '*.apk' | head -n1)"
+          test -n "$APK"
+          cp "$APK" "out/jkyoutube-${GITHUB_SHA::7}.apk"
           ls -lh out
 
       - name: Upload APK

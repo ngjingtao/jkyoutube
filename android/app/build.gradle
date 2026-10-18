@@ -16,8 +16,31 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Stable release signing, used when the keystore is supplied through the
+    // environment by GitHub Actions (secret ANDROID_KEYSTORE_BASE64, decoded to
+    // a file at JKY_KEYSTORE).
+    //
+    // Without it every build is signed with a freshly generated debug key, and
+    // Android refuses to install a differently-signed APK over an existing one.
+    signingConfigs {
+        release {
+            // Requires all three values; a partial configuration would otherwise
+            // produce an unsigned APK that will not install.
+            if (System.getenv("JKY_KEYSTORE") && System.getenv("ANDROID_STORE_PASSWORD") && System.getenv("ANDROID_KEY_ALIAS")) {
+                storeFile file(System.getenv("JKY_KEYSTORE"))
+                storePassword System.getenv("ANDROID_STORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                // PKCS12 keystores use one password for the store and the key.
+                keyPassword System.getenv("ANDROID_STORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (System.getenv("JKY_KEYSTORE") && System.getenv("ANDROID_STORE_PASSWORD") && System.getenv("ANDROID_KEY_ALIAS")) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

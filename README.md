@@ -259,6 +259,33 @@ build.
 The APK is **debug-signed**, which is fine for sideloading. It is not suitable
 for the Play Store, which needs a release key.
 
+### Stable signing (so updates install over the top)
+
+Without this, **every build is signed with a freshly generated debug key**, and
+Android refuses to install a differently-signed APK over an existing one — you
+have to uninstall first each time. A release keystore fixes that.
+
+A keystore has already been generated for you at
+`D:\Projects\JKYoutube-keys\jkyoutube-release.jks` (deliberately outside this
+repository, so it can never be committed). **Back that file and its password up
+somewhere safe** — if you lose them you can never update the app in place again.
+
+Add three repository secrets under
+**Settings → Secrets and variables → Actions → Secrets**:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the contents of `keystore-base64.txt` (one long line, no newlines) |
+| `ANDROID_STORE_PASSWORD` | the password in `PASSWORD.txt` |
+| `ANDROID_KEY_ALIAS` | `jkyoutube` |
+
+Then re-run the workflow (**Actions → Build Android APK → Run workflow**). The
+log will say *"Building a RELEASE APK signed with the stable key."* From then on,
+new APKs install straight over the old one.
+
+If the secrets are missing the workflow still succeeds — it warns and builds a
+debug APK instead, so a misconfiguration never blocks you.
+
 ### Pointing the APK at a different address
 
 The build reads a repository variable named `APP_URL`, falling back to
