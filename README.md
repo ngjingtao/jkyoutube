@@ -194,6 +194,54 @@ provides the database, auth and API that never sleep either.
 
 ---
 
+## Shared database (Supabase)
+
+Without this, every device keeps its own copy of the library and the PC, iPad
+and Android app will show **different** videos. With it, they all read the same
+rows and a change on the PC appears everywhere immediately.
+
+### One-time setup
+
+**1. Create the tables.** Open your Supabase project → **SQL Editor** → **New
+query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql), and
+click **Run**. It is safe to run more than once.
+
+**2. Create your admin account.** Supabase → **Authentication → Users → Add
+user**. Enter your email and a password, and tick **Auto Confirm User** (without
+it, sign-in is refused until the address is confirmed).
+
+**3. Sign in.** Open `/admin`, find the **Shared database** card, and sign in
+with that email and password.
+
+**4. Move anything you already added.** If the card says *"...still only in this
+browser"*, click **Move to the shared database**.
+
+### How it is secured
+
+The publishable key is designed to be public and ships inside the web bundle.
+That is safe **only** because Row-Level Security in `schema.sql` does this:
+
+- `SELECT` is open to everyone using the app, so the iPad and the APK can read
+  the library without a login.
+- `INSERT`, `UPDATE` and `DELETE` are restricted to **signed-in** users.
+
+Those rules live in the database, not in the app, so they cannot be bypassed by
+calling the REST API directly with the key. Two rules to keep:
+
+1. **Never put a `service_role` or secret key in the client.** It bypasses RLS
+   entirely and would give anyone who opens the app full write access.
+2. **Keep RLS enabled** on all three tables. If RLS is off, the key becomes a
+   write credential.
+
+### What stays per-device
+
+Watch history, likes, "watch later" and subscriptions are stored in each
+browser, because they are personal rather than shared. They move to the database
+when real viewer accounts exist.
+
+The **"What the app shows"** setting *is* shared — changing it on the PC applies
+to every device.
+
 ## Android APK
 
 The APK is a thin shell around the deployed web app, so content and UI changes

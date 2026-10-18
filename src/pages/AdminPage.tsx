@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
+import { signIn, signOut } from '../lib/remote'
 import {
   classNames,
   isBilibiliShortLink,
@@ -129,7 +130,7 @@ function describeError(err: unknown): string {
 /* -------------------------------------------------------------- dashboard */
 
 function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
-  const { categories, customVideos, removeVideo, resetToSeed, videos } = useLibrary()
+  const { categories, customVideos, removeVideo, clearAllVideos, videos } = useLibrary()
   const [libraryUrl] = useState(() => window.location.origin)
 
   return (
@@ -138,7 +139,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
         <div>
           <h1 className="text-[26px] font-semibold text-fg">Content manager</h1>
           <p className="mt-1 text-[13px] text-fg2">
-            {videos.length} videos live · {customVideos.length} added by you
+            {videos.length} videos live · {customVideos.length} in the shared library
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -157,6 +158,10 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
           </button>
         </div>
       </header>
+
+      <DatabaseCard />
+
+      <PendingLocalCard />
 
       <div className="mt-6 rounded-xl border border-line bg-chip p-4">
         <p className="text-[13px] leading-5 text-fg2">
@@ -190,10 +195,188 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       <MyLibrary
         videos={customVideos}
         onRemove={removeVideo}
-        onReset={resetToSeed}
+        onClearAll={clearAllVideos}
         categories={categories}
       />
     </div>
+  )
+}
+
+/* --------------------------------------------------------- database/auth -- */
+
+/**
+ * Connection status plus admin sign-in.
+ *
+ * Writes are restricted by Row-Level Security to signed-in users, so this is
+ * what actually protects the shared library — the passcode screen earlier is
+ * only a convenience gate over the UI.
+ */
+function DatabaseCard() {
+  const { status, error, reload, databaseEnabled, signedInAs, refreshAuth } = useLibrary()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await signIn(email.trim(), password)
+      await refreshAuth()
+      await reload()
+    } catch (err) {
+      setSignInError(err instanceof Error ? err.message : 'Sign-in failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const [signInError, setSignInError] = useState<string | null>(null)
+
+  if (!databaseEnabled) {
+    return (
+      <section className="mt-6 rounded-xl border border-line p-4">
+        <h2 className="text-[16px] font-semibold text-fg">Shared database</h2>
+        <p className="mt-1 text-[13px] text-fg2">
+          Not configured. Videos are stored in this browser only.
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">Shared database</h2>
+        <span
+          className={classNames(
+            'rounded-full px-2 py-0.5 text-[11px] font-medium',
+            signedInAs
+              ? 'bg-[#2ba640]/15 text-[#2ba640]'
+              : status === 'error'
+                ? 'bg-[#ff4e45]/15 text-[#ff4e45]'
+                : 'bg-[#ff9d00]/15 text-[#ff9d00]',
+          )}
+        >
+          {signedInAs ? `Signed in as ${signedInAs}` : status === 'error' ? 'Not connected' : 'Read only'}
+        </span>
+      </div>
+
+      {status === 'error' && error ? (
+        <p className="mt-2 text-[13px] leading-5 text-[#ff4e45]">{error}</p>
+      ) : null}
+
+      {signedInAs ? (
+        <>
+          <p className="mt-1 text-[13px] leading-5 text-fg2">
+            Anything you add is saved to the shared database, so the PC, the iPad and the
+            Android app all show the same library.
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              await signOut()
+              await refreshAuth()
+            }}
+            className="mt-3 rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover"
+          >
+            Sign out of the database
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="mt-1 text-[13px] leading-5 text-fg2">
+            <strong className="font-medium text-fg">Sign in to add or change videos.</strong> The
+            public key shipped in the app can only read; the database itself refuses writes from
+            anyone not signed in. Use the account you created in Supabase →{' '}
+            <span className="text-fg">Authentication → Users</span>.
+          </p>
+          <form onSubmit={submit} className="mt-3 flex flex-col gap-3 sm:flex-row">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                setSignInError(null)
+              }}
+              placeholder="you@example.com"
+              autoComplete="username"
+              className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value)
+                setSignInError(null)
+              }}
+              placeholder="Password"
+              autoComplete="current-password"
+              className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+            <button
+              type="submit"
+              disabled={busy || !email || !password}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#065fd4] px-4 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            >
+              {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+              Sign in
+            </button>
+          </form>
+          {signInError ? (
+            <p className="mt-2 text-[13px] text-[#ff4e45]">{signInError}</p>
+          ) : null}
+        </>
+      )}
+    </section>
+  )
+}
+
+/** Offers to move videos that were added before the database existed. */
+function PendingLocalCard() {
+  const { pendingLocalVideos, migrateLocalVideos, signedInAs } = useLibrary()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  if (pendingLocalVideos.length === 0) return null
+
+  async function migrate() {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const { uploaded } = await migrateLocalVideos()
+      setMessage({ kind: 'ok', text: `Moved ${uploaded} video${uploaded === 1 ? '' : 's'} into the shared database.` })
+    } catch (err) {
+      setMessage({ kind: 'err', text: err instanceof Error ? err.message : 'Could not move them.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-[#ff9d00]/40 p-4">
+      <h2 className="text-[16px] font-semibold text-fg">
+        {pendingLocalVideos.length} video{pendingLocalVideos.length === 1 ? '' : 's'} still only in
+        this browser
+      </h2>
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        These were added before the shared database existed. They are visible here but not on the
+        iPad or the phone. Move them up so every device sees them.
+      </p>
+      <button
+        type="button"
+        onClick={migrate}
+        disabled={busy || !signedInAs}
+        className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#065fd4] px-4 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+      >
+        {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+        Move to the shared database
+      </button>
+      {!signedInAs ? (
+        <p className="mt-2 text-[12px] text-fg2">Sign in above first.</p>
+      ) : null}
+      <StatusMessage message={message} />
+    </section>
   )
 }
 
@@ -456,7 +639,7 @@ function AddSingleVideo({ categories }: { categories: { id: string; name: string
       const meta = result?.videos[0]
       const chan = result?.channels.find((c) => c.id === meta?.channelId)
 
-      const added = addVideo({
+      const added = await addVideo({
         url,
         title: meta?.title || title,
         description: meta?.description,
@@ -480,10 +663,10 @@ function AddSingleVideo({ categories }: { categories: { id: string; name: string
       }
 
       setMessage({
-        kind: 'ok',
-        text: meta
-          ? `Added “${added.video?.title}” with every YouTube detail copied.`
-          : `Added “${added.video?.title}”. No API key, so some details are still missing.`,
+        kind: added.savedToDatabase ? 'ok' : 'err',
+        text: added.savedToDatabase
+          ? `Added “${added.video?.title}” to the shared library. It will appear on the iPad and the phone.`
+          : `Added “${added.video?.title}”, but only in THIS browser — you are not signed in to the database, so other devices will not see it.`,
       })
       setUrl('')
       setTitle('')
@@ -605,7 +788,7 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
   const ref = parseBilibiliId(url)
   const shortLink = isBilibiliShortLink(url)
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!ref) {
       setMessage({
@@ -627,7 +810,7 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
     const viewCount = views.trim() ? Number(views.replace(/[^0-9]/g, '')) : undefined
     const publishedAt = published ? new Date(`${published}T12:00:00`).toISOString() : undefined
 
-    const result = addVideo({
+    const result = await addVideo({
       url,
       title,
       authorName,
@@ -644,8 +827,8 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
     }
 
     setMessage({
-      kind: 'ok',
-      text: `Added “${result.video?.title}”.${
+      kind: result.savedToDatabase ? 'ok' : 'err',
+      text: `${result.savedToDatabase ? 'Added to the shared library' : 'Added in THIS browser only (not signed in)'}: “${result.video?.title}”.${
         thumbnailUrl ? '' : ' A placeholder thumbnail was generated — paste an image URL to replace it.'
       }`,
     })
@@ -887,11 +1070,12 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
 
       let added = 0
       let skipped = 0
+      let savedToDatabase = 0
 
       for (const id of youtubeIds) {
         const meta = metaById.get(id)
         const chan = meta ? channelById.get(meta.channelId) : undefined
-        const result = addVideo({
+        const result = await addVideo({
           url: `https://www.youtube.com/watch?v=${id}`,
           title: meta?.title ?? 'Untitled video',
           description: meta?.description,
@@ -908,16 +1092,24 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
           thumbnailUrl: meta?.thumbnailUrl,
           isLive: meta?.isLive,
         })
-        if (result.ok) added += 1
-        else skipped += 1
+        if (result.ok) {
+          added += 1
+          if (result.savedToDatabase) savedToDatabase += 1
+        } else {
+          skipped += 1
+        }
       }
 
       // Bilibili entries cannot be enriched, so they start untitled and get a
       // generated thumbnail. Rename them in the list below.
       for (const url of bilibiliUrls) {
-        const result = addVideo({ url, authorName: '', categoryId })
-        if (result.ok) added += 1
-        else skipped += 1
+        const result = await addVideo({ url, authorName: '', categoryId })
+        if (result.ok) {
+          added += 1
+          if (result.savedToDatabase) savedToDatabase += 1
+        } else {
+          skipped += 1
+        }
       }
 
       const parts = [`Added ${added} video${added === 1 ? '' : 's'}`]
@@ -932,7 +1124,14 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
       }
       if (unusable.length) parts.push(`${unusable.length} line(s) ignored`)
 
-      setMessage({ kind: added > 0 ? 'ok' : 'err', text: `${parts.join(' · ')}.` })
+      const where =
+        added > 0 && savedToDatabase === added
+          ? ' Saved to the shared library — visible on every device.'
+          : added > 0
+            ? ' NOT signed in to the database, so these are in this browser only.'
+            : ''
+
+      setMessage({ kind: added > 0 ? 'ok' : 'err', text: `${parts.join(' · ')}.${where}` })
       if (added > 0) setText('')
     } catch (err) {
       setMessage({ kind: 'err', text: describeError(err) })
@@ -988,12 +1187,12 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
 function MyLibrary({
   videos,
   onRemove,
-  onReset,
+  onClearAll,
   categories,
 }: {
   videos: Video[]
-  onRemove: (id: string) => void
-  onReset: () => void
+  onRemove: (id: string) => Promise<void>
+  onClearAll: () => Promise<void>
   categories: { id: string; name: string }[]
 }) {
   const { updateVideo, updateChannel, getChannel } = useLibrary()
@@ -1127,7 +1326,9 @@ function MyLibrary({
           <button
             type="button"
             onClick={() => {
-              if (window.confirm('Remove every video you have added?')) onReset()
+              if (window.confirm('Remove every video from the shared library? This affects all devices.')) {
+                void onClearAll()
+              }
             }}
             disabled={videos.length === 0}
             className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-[#ff4e45] hover:bg-chip-hover disabled:opacity-40"

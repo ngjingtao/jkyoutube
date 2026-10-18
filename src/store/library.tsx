@@ -2,7 +2,10 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
+  useState,
   type ReactNode,
 } from 'react'
 import {
@@ -12,6 +15,7 @@ import {
   videos as seedVideos,
 } from '../data/mock'
 import { useLocalStorage } from '../lib/hooks'
+import { bilibiliPlaceholderThumbnail, bilibiliVideoId, bilibiliWatchUrl } from '../lib/bilibili'
 import {
   isBilibiliShortLink,
   parseBilibiliId,
@@ -19,28 +23,39 @@ import {
   youTubeThumbnail,
 } from '../lib/format'
 import type { BilibiliRef } from '../lib/format'
-import { bilibiliPlaceholderThumbnail, bilibiliVideoId, bilibiliWatchUrl } from '../lib/bilibili'
+import {
+  deleteAllUserVideos,
+  deleteVideoRow,
+  fetchLibrary,
+  fetchSetting,
+  getSessionEmail,
+  patchVideoRow,
+  saveSetting,
+  supabaseConfigured,
+  upsertChannels,
+  upsertVideos,
+} from '../lib/remote'
 import type { Category, Channel, Playlist, Video } from '../types'
 
 /**
  * Single seam between the UI and its data.
  *
- * Today: the bundled placeholder library plus admin-added videos kept in
- * localStorage. Phase 3 swaps the storage for Supabase — the surface below
- * stays identical, so no component has to change.
+ * The shared library (videos and channels) now lives in Supabase, so the PC,
+ * the iPad and the Android APK all see the same content.
+ *
+ * Per-viewer state stays in this browser on purpose: watch history, likes and
+ * "watch later" are personal to a device until real user accounts exist.
+ *
+ * Anything added while signed out is kept in localStorage and shown alongside
+ * the shared library, so nothing is ever silently lost — the admin screen
+ * offers to move it up to the database.
  */
 
 export type Reaction = 'like' | 'dislike' | null
 
-/**
- * What the app is allowed to show.
- *
- * - `auto`    samples appear only until the first video is added. Keeps a fresh
- *             install from looking broken, then gets out of the way.
- * - `mine`    never show the bundled placeholders — your library only.
- * - `samples` placeholders only, ignoring anything added. Useful for comparing.
- */
 export type LibraryMode = 'auto' | 'mine' | 'samples'
+
+export type LibraryStatus = 'loading' | 'ready' | 'error'
 
 export interface NewVideoInput {
   url: string
@@ -64,15 +79,9 @@ export interface NewVideoInput {
 export interface AddVideoResult {
   ok: boolean
   video?: Video
+  /** True when the write landed in the shared database rather than this browser. */
+  savedToDatabase?: boolean
   error?: string
-}
-
-/** Shape returned by YouTube's public oEmbed endpoint. */
-export interface OEmbedInfo {
-  title: string
-  authorName: string
-  authorUrl?: string
-  thumbnailUrl?: string
 }
 
 interface LibraryValue {
@@ -103,17 +112,27 @@ interface LibraryValue {
   isSubscribed: (channelId: string) => boolean
   toggleSubscribe: (channelId: string) => void
 
+  status: LibraryStatus
+  error: string | null
+  reload: () => Promise<void>
+  databaseEnabled: boolean
+
+  signedInAs: string | null
+  refreshAuth: () => Promise<void>
+
   /* ---------------------------------------------------------- admin side */
   customVideos: Video[]
   customChannels: Channel[]
+  pendingLocalVideos: Video[]
   sampleVideoCount: number
   libraryMode: LibraryMode
   setLibraryMode: (mode: LibraryMode) => void
-  addVideo: (input: NewVideoInput) => AddVideoResult
-  updateVideo: (id: string, patch: Partial<Video>) => void
-  updateChannel: (id: string, patch: Partial<Channel>) => void
-  removeVideo: (id: string) => void
-  resetToSeed: () => void
+  addVideo: (input: NewVideoInput) => Promise<AddVideoResult>
+  updateVideo: (id: string, patch: Partial<Video>) => Promise<void>
+  updateChannel: (id: string, patch: Partial<Channel>) => Promise<void>
+  removeVideo: (id: string) => Promise<void>
+  clearAllVideos: () => Promise<void>
+  migrateLocalVideos: () => Promise<{ uploaded: number }>
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null)
@@ -127,11 +146,13 @@ function slugify(value: string): string {
 }
 
 /**
- * Best-effort metadata lookup. YouTube's own oEmbed endpoint does not send
- * CORS headers, so we try it and fall back to noembed.com. Thumbnails never
- * depend on this — they are derived from the video id.
+ * Best-effort metadata lookup. YouTube's own oEmbed endpoint does not send CORS
+ * headers, so we try it and fall back to noembed.com. Thumbnails never depend on
+ * this — they are derived from the video id.
  */
-export async function fetchOEmbed(videoId: string): Promise<OEmbedInfo | null> {
+export async function fetchOEmbed(
+  videoId: string,
+): Promise<{ title: string; authorName: string; authorUrl?: string } | null> {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`
   const endpoints = [
     `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`,
@@ -141,18 +162,12 @@ export async function fetchOEmbed(videoId: string): Promise<OEmbedInfo | null> {
     try {
       const res = await fetch(url)
       if (!res.ok) continue
-      const data = (await res.json()) as {
-        title?: string
-        author_name?: string
-        author_url?: string
-        thumbnail_url?: string
-      }
+      const data = (await res.json()) as { title?: string; author_name?: string; author_url?: string }
       if (data?.title) {
         return {
           title: data.title,
           authorName: data.author_name ?? 'Unknown',
           authorUrl: data.author_url,
-          thumbnailUrl: data.thumbnail_url,
         }
       }
     } catch {
@@ -166,52 +181,118 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [reactions, setReactions] = useLocalStorage<Record<string, Reaction>>('jk.reactions', {})
   const [history, setHistory] = useLocalStorage<string[]>('jk.history', [])
   const [watchLater, setWatchLater] = useLocalStorage<string[]>('jk.watchLater', [])
-  const [subscriptions, setSubscriptions] = useLocalStorage<string[]>(
-    'jk.subscriptions',
-    ['ch-lofi', 'ch-music'],
-  )
-  const [customVideos, setCustomVideos] = useLocalStorage<Video[]>('jk.videos', [])
-  const [customChannels, setCustomChannels] = useLocalStorage<Channel[]>('jk.channels', [])
-  const [libraryMode, setLibraryMode] = useLocalStorage<LibraryMode>('jk.libraryMode', 'auto')
+  const [subscriptions, setSubscriptions] = useLocalStorage<string[]>('jk.subscriptions', [
+    'ch-lofi',
+    'ch-music',
+  ])
 
-  const channels = useMemo(
-    () => [...seedChannels, ...customChannels],
-    [customChannels],
+  // Shared library, from Supabase.
+  const [dbVideos, setDbVideos] = useState<Video[]>([])
+  const [dbChannels, setDbChannels] = useState<Channel[]>([])
+  const [status, setStatus] = useState<LibraryStatus>(supabaseConfigured ? 'loading' : 'ready')
+  const [error, setError] = useState<string | null>(null)
+  const [signedInAs, setSignedInAs] = useState<string | null>(null)
+
+  // Videos added while signed out. Kept so nothing is lost; migratable.
+  const [localVideos, setLocalVideos] = useLocalStorage<Video[]>('jk.videos', [])
+  const [localChannels, setLocalChannels] = useLocalStorage<Channel[]>('jk.channels', [])
+
+  const [libraryMode, setLibraryModeState] = useLocalStorage<LibraryMode>('jk.libraryMode', 'auto')
+  const modeLoadedFromDb = useRef(false)
+
+  /* ------------------------------------------------------------- loading */
+
+  const load = useCallback(async () => {
+    if (!supabaseConfigured) {
+      setStatus('ready')
+      return
+    }
+    setStatus('loading')
+    try {
+      const { videos, channels } = await fetchLibrary()
+      setDbVideos(videos)
+      setDbChannels(channels)
+      setError(null)
+      setStatus('ready')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reach the database.')
+      setStatus('error')
+    }
+  }, [])
+
+  const refreshAuth = useCallback(async () => {
+    setSignedInAs(await getSessionEmail())
+  }, [])
+
+  useEffect(() => {
+    void load()
+    void refreshAuth()
+  }, [load, refreshAuth])
+
+  // Adopt the shared sample-library setting once, without clobbering a choice
+  // the viewer just made on this device.
+  useEffect(() => {
+    if (!supabaseConfigured || modeLoadedFromDb.current) return
+    modeLoadedFromDb.current = true
+    void fetchSetting<LibraryMode>('libraryMode').then((mode) => {
+      if (mode === 'auto' || mode === 'mine' || mode === 'samples') setLibraryModeState(mode)
+    })
+  }, [setLibraryModeState])
+
+  /* ------------------------------------------------------------ deriving */
+
+  /** Local videos not yet in the database (matched by id). */
+  const pendingLocalVideos = useMemo(
+    () => localVideos.filter((lv) => !dbVideos.some((dv) => dv.id === lv.id)),
+    [localVideos, dbVideos],
   )
 
-  /** Decides whether the bundled placeholder library takes part at all. */
+  const customVideos = useMemo(
+    () => [...dbVideos].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
+    [dbVideos],
+  )
+
+  const customChannels = useMemo(() => {
+    const map = new Map<string, Channel>()
+    for (const c of [...localChannels, ...dbChannels]) map.set(c.id, c)
+    return [...map.values()]
+  }, [localChannels, dbChannels])
+
+  const channels = useMemo(() => {
+    const map = new Map<string, Channel>()
+    for (const c of seedChannels) map.set(c.id, c)
+    for (const c of customChannels) map.set(c.id, c)
+    return [...map.values()]
+  }, [customChannels])
+
   const includeSamples = useMemo(() => {
     if (libraryMode === 'samples') return true
     if (libraryMode === 'mine') return false
-    return customVideos.length === 0
-  }, [libraryMode, customVideos.length])
+    // Auto: placeholders only until there is something of your own, counting
+    // both the shared library and anything still held locally.
+    return dbVideos.length === 0 && pendingLocalVideos.length === 0
+  }, [libraryMode, dbVideos.length, pendingLocalVideos.length])
 
-  const allVideos = useMemo(
-    () =>
-      libraryMode === 'samples'
-        ? seedVideos
-        : includeSamples
-          ? [...seedVideos, ...customVideos]
-          : customVideos,
-    [includeSamples, libraryMode, customVideos],
-  )
+  const videos = useMemo(() => {
+    const own = [...dbVideos, ...pendingLocalVideos]
+    const source =
+      libraryMode === 'samples' ? seedVideos : includeSamples ? [...seedVideos, ...own] : own
 
-  const videos = useMemo(
-    () =>
-      [...allVideos]
-        .filter((v) => v.status === 'published')
-        .sort((a, b) => {
-          if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
-          return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-        }),
-    [allVideos],
-  )
+    const seen = new Set<string>()
+    return source
+      .filter((v) => v.status === 'published')
+      .filter((v) => (seen.has(v.id) ? false : (seen.add(v.id), true)))
+      .sort((a, b) => {
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+        return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+      })
+  }, [includeSamples, libraryMode, dbVideos, pendingLocalVideos])
 
   const videoById = useMemo(() => {
     const map = new Map<string, Video>()
-    for (const v of allVideos) map.set(v.id, v)
+    for (const v of [...seedVideos, ...dbVideos, ...pendingLocalVideos]) map.set(v.id, v)
     return map
-  }, [allVideos])
+  }, [dbVideos, pendingLocalVideos])
 
   const channelById = useMemo(() => {
     const map = new Map<string, Channel>()
@@ -231,14 +312,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const getVideo = useCallback((id: string) => videoById.get(id), [videoById])
   const getChannel = useCallback((id: string) => channelById.get(id), [channelById])
-  const getChannelVideos = useCallback(
-    (channelId: string) => byChannel.get(channelId) ?? [],
-    [byChannel],
-  )
-  const getPlaylist = useCallback(
-    (id: string) => seedPlaylists.find((p) => p.id === id),
-    [],
-  )
+  const getChannelVideos = useCallback((channelId: string) => byChannel.get(channelId) ?? [], [byChannel])
+  const getPlaylist = useCallback((id: string) => seedPlaylists.find((p) => p.id === id), [])
   const getPlaylistVideos = useCallback(
     (id: string) => {
       if (id === 'pl-watch-later') {
@@ -285,6 +360,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [videos, channelById],
   )
 
+  /* ------------------------------------------------------- per-viewer state */
+
   const setReaction = useCallback(
     (videoId: string, value: Reaction) => {
       setReactions((prev) => {
@@ -329,51 +406,46 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [setSubscriptions],
   )
 
-  /* ------------------------------------------------------------ admin API */
+  const setLibraryMode = useCallback(
+    (mode: LibraryMode) => {
+      setLibraryModeState(mode)
+      // Share the setting so every device agrees. Silently ignored when signed
+      // out, because the database refuses writes from the public key.
+      void saveSetting('libraryMode', mode).catch(() => undefined)
+    },
+    [setLibraryModeState],
+  )
 
-  const addVideo = useCallback(
-    (input: NewVideoInput): AddVideoResult => {
-      // b23.tv short links cannot be resolved from the browser: following the
-      // redirect needs a cross-origin request, which is blocked. Say so plainly
-      // rather than reporting a generic "not a link" error.
-      if (isBilibiliShortLink(input.url)) {
-        return {
-          ok: false,
-          error:
-            'Short b23.tv links cannot be read. Open the link in a browser, then copy the full bilibili.com/video/BV… address.',
-        }
-      }
+  /* ------------------------------------------------------------ writing */
 
-      const youtubeId = parseYouTubeId(input.url)
-      const bilibiliRef = youtubeId ? null : parseBilibiliId(input.url)
-
-      if (!youtubeId && !bilibiliRef) {
-        return { ok: false, error: 'That does not look like a YouTube or Bilibili link.' }
-      }
-
-      const bilibiliId = bilibiliRef ? bilibiliVideoId(bilibiliRef) : undefined
-      const duplicate = allVideos.some((v) =>
-        youtubeId ? v.youtubeId === youtubeId : v.bilibiliId === bilibiliId,
-      )
-      if (duplicate) {
-        return { ok: false, error: 'That video is already in your library.' }
-      }
-
+  /** Resolves or creates the channel row for a video. */
+  const resolveChannel = useCallback(
+    (input: NewVideoInput): { channel: Channel; existing: boolean } => {
       const author = (input.authorName ?? 'My Channel').trim() || 'My Channel'
       const handle = input.handle?.trim() || `@${slugify(author) || 'mychannel'}`
 
-      // Prefer matching the real YouTube channel id so two different channels
-      // that happen to share a display name do not get merged. Name-derived ids
-      // are deterministic so a bulk add cannot create the channel twice.
       let channel = input.youtubeChannelId
         ? channels.find((c) => c.id === `ch-yt-${input.youtubeChannelId}`)
         : undefined
-      if (!channel) {
-        channel = channels.find((c) => c.name.toLowerCase() === author.toLowerCase())
+      if (!channel) channel = channels.find((c) => c.name.toLowerCase() === author.toLowerCase())
+
+      if (channel) {
+        return {
+          channel: {
+            ...channel,
+            name: author || channel.name,
+            handle: handle || channel.handle,
+            avatarUrl: input.channelAvatarUrl || channel.avatarUrl,
+            ...(input.subscriberCount !== undefined
+              ? { subscriberCount: input.subscriberCount }
+              : {}),
+          },
+          existing: true,
+        }
       }
 
-      if (!channel) {
-        channel = {
+      return {
+        channel: {
           id: input.youtubeChannelId
             ? `ch-yt-${input.youtubeChannelId}`
             : `ch-name-${slugify(author) || 'mychannel'}`,
@@ -384,95 +456,205 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
           ...(input.subscriberCount !== undefined
             ? { subscriberCount: input.subscriberCount }
             : {}),
+        },
+        existing: false,
+      }
+    },
+    [channels],
+  )
+
+  const buildVideo = useCallback(
+    (input: NewVideoInput, channelId: string): AddVideoResult => {
+      if (isBilibiliShortLink(input.url)) {
+        return {
+          ok: false,
+          error:
+            'Short b23.tv links cannot be read. Open the link in a browser, then copy the full bilibili.com/video/BV… address.',
         }
-        setCustomChannels((prev) =>
-          prev.some((c) => c.id === channel!.id) ? prev : [...prev, channel as Channel],
-        )
-      } else if (channel.id.startsWith('ch-yt-') || customChannels.some((c) => c.id === channel!.id)) {
-        // Refresh the details we already know about this channel.
-        setCustomChannels((prev) =>
-          prev.map((c) =>
-            c.id === channel!.id
-              ? {
-                  ...c,
-                  name: author || c.name,
-                  handle: handle || c.handle,
-                  avatarUrl: input.channelAvatarUrl || c.avatarUrl,
-                  ...(input.subscriberCount !== undefined
-                    ? { subscriberCount: input.subscriberCount }
-                    : {}),
-                }
-              : c,
-          ),
-        )
+      }
+
+      const youtubeId = parseYouTubeId(input.url)
+      const bilibiliRef = youtubeId ? null : parseBilibiliId(input.url)
+      if (!youtubeId && !bilibiliRef) {
+        return { ok: false, error: 'That does not look like a YouTube or Bilibili link.' }
+      }
+
+      const bilibiliId = bilibiliRef ? bilibiliVideoId(bilibiliRef) : undefined
+      const id = youtubeId ? `v-${youtubeId}` : `v-bili-${bilibiliId}`
+      if (videoById.has(id)) {
+        return { ok: false, error: 'That video is already in your library.' }
       }
 
       const title = input.title?.trim() || 'Untitled video'
-
-      // Bilibili exposes no thumbnail API, so generate a stand-in card when the
-      // admin did not paste an image URL. Better than an empty grey box.
       const thumbnailUrl =
         input.thumbnailUrl ||
         (bilibiliRef
           ? bilibiliPlaceholderThumbnail(title, bilibiliId ?? title)
           : youTubeThumbnail(youtubeId as string))
 
-      const created: Video = {
-        id: youtubeId ? `v-${youtubeId}` : `v-bili-${bilibiliId}`,
-        title,
-        description: input.description?.trim() ?? '',
-        sourceType: youtubeId ? 'youtube' : 'bilibili',
-        sourceUrl: youtubeId
-          ? `https://www.youtube.com/watch?v=${youtubeId}`
-          : bilibiliWatchUrl(bilibiliRef as BilibiliRef),
-        ...(youtubeId ? { youtubeId } : {}),
-        ...(bilibiliId ? { bilibiliId } : {}),
-        embeddable: true,
-        thumbnailUrl,
-        thumbnailIsGenerated: Boolean(bilibiliRef && !input.thumbnailUrl),
-        durationSeconds: input.durationSeconds ?? 0,
-        channelId: channel.id,
-        categoryId: input.categoryId ?? 'all',
-        publishedAt: input.publishedAt ?? new Date().toISOString(),
-        viewCount: input.viewCount ?? 0,
-        likeCount: input.likeCount ?? 0,
-        isLive: input.isLive ?? false,
-        // Bilibili exposes no statistics, so say "unknown" rather than "0 views".
-        statsUnknown: Boolean(bilibiliRef) && input.viewCount === undefined,
-        status: 'published',
+      return {
+        ok: true,
+        video: {
+          id,
+          title,
+          description: input.description?.trim() ?? '',
+          sourceType: youtubeId ? 'youtube' : 'bilibili',
+          sourceUrl: youtubeId
+            ? `https://www.youtube.com/watch?v=${youtubeId}`
+            : bilibiliWatchUrl(bilibiliRef as BilibiliRef),
+          ...(youtubeId ? { youtubeId } : {}),
+          ...(bilibiliId ? { bilibiliId } : {}),
+          embeddable: true,
+          thumbnailUrl,
+          thumbnailIsGenerated: Boolean(bilibiliRef && !input.thumbnailUrl),
+          durationSeconds: input.durationSeconds ?? 0,
+          channelId,
+          categoryId: input.categoryId ?? 'all',
+          publishedAt: input.publishedAt ?? new Date().toISOString(),
+          viewCount: input.viewCount ?? 0,
+          likeCount: input.likeCount ?? 0,
+          isLive: input.isLive ?? false,
+          statsUnknown: Boolean(bilibiliRef) && input.viewCount === undefined,
+          status: 'published',
+        },
+      }
+    },
+    [videoById],
+  )
+
+  const addVideo = useCallback(
+    async (input: NewVideoInput): Promise<AddVideoResult> => {
+      const { channel } = resolveChannel(input)
+      const built = buildVideo(input, channel.id)
+      if (!built.ok || !built.video) return built
+      const video = built.video
+
+      if (signedInAs) {
+        try {
+          await upsertChannels([channel])
+          await upsertVideos([video])
+          setDbChannels((prev) =>
+            prev.some((c) => c.id === channel.id)
+              ? prev.map((c) => (c.id === channel.id ? channel : c))
+              : [...prev, channel],
+          )
+          setDbVideos((prev) => [video, ...prev.filter((v) => v.id !== video.id)])
+          return { ok: true, video, savedToDatabase: true }
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : 'Could not save.' }
+        }
       }
 
-      setCustomVideos((prev) => [created, ...prev])
-      return { ok: true, video: created }
+      // Signed out: keep it locally so nothing is lost, and say so.
+      setLocalChannels((prev) =>
+        prev.some((c) => c.id === channel.id)
+          ? prev.map((c) => (c.id === channel.id ? channel : c))
+          : [...prev, channel],
+      )
+      setLocalVideos((prev) => [video, ...prev.filter((v) => v.id !== video.id)])
+      return { ok: true, video, savedToDatabase: false }
     },
-    [allVideos, channels, customChannels, setCustomChannels, setCustomVideos],
+    [resolveChannel, buildVideo, signedInAs, setLocalChannels, setLocalVideos],
   )
 
   const updateVideo = useCallback(
-    (id: string, patch: Partial<Video>) => {
-      setCustomVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+    async (id: string, patch: Partial<Video>) => {
+      const isLocal = localVideos.some((v) => v.id === id) && !dbVideos.some((v) => v.id === id)
+      if (isLocal) {
+        setLocalVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+        return
+      }
+      if (!signedInAs) {
+        setDbVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+        return
+      }
+      try {
+        await patchVideoRow(id, patch)
+      } catch {
+        /* fall through to the local update so the UI stays consistent */
+      }
+      setDbVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
     },
-    [setCustomVideos],
+    [localVideos, dbVideos, signedInAs, setLocalVideos],
   )
 
   const updateChannel = useCallback(
-    (id: string, patch: Partial<Channel>) => {
-      setCustomChannels((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+    async (id: string, patch: Partial<Channel>) => {
+      const apply = (prev: Channel[]) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c))
+      setLocalChannels(apply)
+      setDbChannels(apply)
+      if (!signedInAs) return
+      const existing = dbChannels.find((c) => c.id === id)
+      if (existing) {
+        try {
+          await upsertChannels([{ ...existing, ...patch }])
+        } catch {
+          /* non-fatal */
+        }
+      }
     },
-    [setCustomChannels],
+    [signedInAs, dbChannels, setLocalChannels],
   )
 
   const removeVideo = useCallback(
-    (id: string) => {
-      setCustomVideos((prev) => prev.filter((v) => v.id !== id))
+    async (id: string) => {
+      setLocalVideos((prev) => prev.filter((v) => v.id !== id))
+      setDbVideos((prev) => prev.filter((v) => v.id !== id))
+      if (signedInAs) {
+        try {
+          await deleteVideoRow(id)
+        } catch {
+          /* already gone locally */
+        }
+      }
     },
-    [setCustomVideos],
+    [signedInAs, setLocalVideos],
   )
 
-  const resetToSeed = useCallback(() => {
-    setCustomVideos([])
-    setCustomChannels([])
-  }, [setCustomVideos, setCustomChannels])
+  const clearAllVideos = useCallback(async () => {
+    const ids = dbVideos.map((v) => v.id)
+    setLocalVideos([])
+    setLocalChannels([])
+    setDbVideos([])
+    if (signedInAs && ids.length) {
+      await deleteAllUserVideos(ids).catch(() => undefined)
+    }
+  }, [signedInAs, dbVideos, setLocalVideos, setLocalChannels])
+
+  const migrateLocalVideos = useCallback(async () => {
+    if (!signedInAs) throw new Error('Sign in first, then the videos can be uploaded.')
+    const videosToSend = pendingLocalVideos
+    if (videosToSend.length === 0) return { uploaded: 0 }
+
+    const channelIds = [...new Set(videosToSend.map((v) => v.channelId))]
+    const channelsToSend = localChannels.filter((c) => channelIds.includes(c.id))
+
+    await upsertChannels(channelsToSend)
+    await upsertVideos(videosToSend)
+
+    setDbChannels((prev) => {
+      const map = new Map(prev.map((c) => [c.id, c]))
+      for (const c of channelsToSend) map.set(c.id, c)
+      return [...map.values()]
+    })
+    setDbVideos((prev) => {
+      const map = new Map(prev.map((v) => [v.id, v]))
+      for (const v of videosToSend) map.set(v.id, v)
+      return [...map.values()]
+    })
+    setLocalVideos((prev) => prev.filter((v) => !videosToSend.some((s) => s.id === v.id)))
+    setLocalChannels((prev) => prev.filter((c) => !channelsToSend.some((s) => s.id === c.id)))
+
+    return { uploaded: videosToSend.length }
+  }, [
+    signedInAs,
+    pendingLocalVideos,
+    localChannels,
+    setDbChannels,
+    setDbVideos,
+    setLocalVideos,
+    setLocalChannels,
+  ])
 
   const value: LibraryValue = {
     videos,
@@ -496,8 +678,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     subscriptions,
     isSubscribed,
     toggleSubscribe,
+    status,
+    error,
+    reload: load,
+    databaseEnabled: supabaseConfigured,
+    signedInAs,
+    refreshAuth,
     customVideos,
     customChannels,
+    pendingLocalVideos,
     sampleVideoCount: seedVideos.length,
     libraryMode,
     setLibraryMode,
@@ -505,7 +694,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     updateVideo,
     updateChannel,
     removeVideo,
-    resetToSeed,
+    clearAllVideos,
+    migrateLocalVideos,
   }
 
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>
