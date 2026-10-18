@@ -857,26 +857,56 @@ function AddBilibiliVideo({ categories }: { categories: { id: string; name: stri
 
       <details className="mt-3 rounded-lg border border-line p-3">
         <summary className="cursor-pointer text-[13px] font-medium text-fg">
-          Why is this different from YouTube?
+          Read this before adding Bilibili videos
         </summary>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-[12px] leading-5 text-fg2">
-          <li>
-            Bilibili's API returns <span className="text-fg">HTTP 403 with no CORS headers</span>,
-            so a browser cannot read titles, thumbnails or view counts. There is no oEmbed
-            endpoint either.
-          </li>
-          <li>
-            The player is Bilibili's own, embedded from{' '}
-            <span className="text-fg">player.bilibili.com</span>. Its logo and controls are
-            theirs, so it will not look like YouTube's player.
-          </li>
-          <li>
-            Scrolling bullet comments are switched off (
-            <span className="text-fg">danmaku=0</span>), which removes the biggest visual
-            difference.
-          </li>
-          <li>Autoplay-next does not trigger for Bilibili videos; there is no scripting API.</li>
-        </ul>
+        <div className="mt-2 space-y-3 text-[12px] leading-5 text-fg2">
+          <p>
+            <strong className="text-fg">Bilibili actively restricts embedding.</strong> Its player
+            checks which site opened it and refuses anything that is not a Bilibili page. That
+            produces the message{' '}
+            <em>“非常抱歉，视频无法播放”</em> — or its longer form listing 视频失效 / 内容不和谐 /
+            UP主删除 / 侵权 — which is a generic notice, <strong className="text-fg">not</strong> a
+            report that your video is broken.
+          </p>
+
+          <p>
+            <strong className="text-fg">Check the video is embeddable first.</strong> On a
+            computer, open the video on bilibili.com, click <span className="text-fg">分享</span>{' '}
+            (Share), and look for an <span className="text-fg">嵌入代码</span> (embed code) tab. If
+            that tab does not exist, the uploader has disabled external embedding and the video
+            will <em>never</em> play here. Skip it.
+          </p>
+
+          <p>
+            <strong className="text-fg">What cannot be embedded at all:</strong> member-only
+            (大会员) videos, licensed shows and films, reposted clips, and private or
+            followers-only videos.
+          </p>
+
+          <p>
+            <strong className="text-fg">Expect some failures anyway.</strong> Even for a video with
+            embed code, Bilibili's check is enforced unevenly — it can work one day and fail the
+            next, and it is notably less reliable from outside mainland China. This is Bilibili's
+            policy, not something this app can correct, and not something it should try to
+            circumvent.
+          </p>
+
+          <p>
+            <strong className="text-fg">YouTube does not have this problem.</strong> If you need
+            dependable playback, prefer YouTube links.
+          </p>
+
+          <p>
+            Also: Bilibili's API refuses browser requests (
+            <span className="text-fg">HTTP 403</span>), so nothing can be filled in automatically
+            — title, thumbnail, duration and views are all manual. There is no oEmbed endpoint
+            either. And the player is Bilibili's own, embedded from{' '}
+            <span className="text-fg">player.bilibili.com</span>, so its logo and controls are
+            theirs and it will not look like YouTube's player. Scrolling bullet comments are
+            switched off (<span className="text-fg">danmaku=0</span>). Autoplay-next does not fire,
+            because the embed has no scripting API.
+          </p>
+        </div>
       </details>
 
       <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
