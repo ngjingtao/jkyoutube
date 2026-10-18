@@ -2,7 +2,15 @@ import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
-import { classNames, parseYouTubeId, timeAgo, youTubeThumbnail } from '../lib/format'
+import {
+  classNames,
+  isBilibiliShortLink,
+  parseBilibiliId,
+  parseDurationInput,
+  parseYouTubeId,
+  timeAgo,
+  youTubeThumbnail,
+} from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
 import {
   YouTubeApiError,
@@ -175,6 +183,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <AddSingleVideo categories={categories} />
+        <AddBilibiliVideo categories={categories} />
         <BulkAdd categories={categories} />
       </div>
 
@@ -488,7 +497,7 @@ function AddSingleVideo({ categories }: { categories: { id: string; name: string
 
   return (
     <section className="rounded-xl border border-line p-4">
-      <h2 className="text-[16px] font-semibold text-fg">Add a video</h2>
+      <h2 className="text-[16px] font-semibold text-fg">Add a YouTube video</h2>
       <p className="mt-1 text-[13px] text-fg2">
         Paste a YouTube link. All the details are copied automatically.
       </p>
@@ -581,6 +590,240 @@ function AddSingleVideo({ categories }: { categories: { id: string; name: string
   )
 }
 
+function AddBilibiliVideo({ categories }: { categories: { id: string; name: string }[] }) {
+  const { addVideo } = useLibrary()
+  const [url, setUrl] = useState('')
+  const [title, setTitle] = useState('')
+  const [authorName, setAuthorName] = useState('')
+  const [categoryId, setCategoryId] = useState('all')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+  const [duration, setDuration] = useState('')
+  const [views, setViews] = useState('')
+  const [published, setPublished] = useState('')
+  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const ref = parseBilibiliId(url)
+  const shortLink = isBilibiliShortLink(url)
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!ref) {
+      setMessage({
+        kind: 'err',
+        text: shortLink
+          ? 'Short b23.tv links cannot be read. Open the link, then copy the full bilibili.com/video/BV… address.'
+          : 'Paste a Bilibili link such as https://www.bilibili.com/video/BV1GJ411x7h7',
+      })
+      return
+    }
+    if (!title.trim()) {
+      setMessage({
+        kind: 'err',
+        text: 'A title is required for Bilibili videos — their API blocks browsers, so it cannot be read automatically.',
+      })
+      return
+    }
+
+    const viewCount = views.trim() ? Number(views.replace(/[^0-9]/g, '')) : undefined
+    const publishedAt = published ? new Date(`${published}T12:00:00`).toISOString() : undefined
+
+    const result = addVideo({
+      url,
+      title,
+      authorName,
+      categoryId,
+      thumbnailUrl: thumbnailUrl.trim(),
+      durationSeconds: parseDurationInput(duration),
+      ...(viewCount !== undefined && Number.isFinite(viewCount) ? { viewCount } : {}),
+      ...(publishedAt ? { publishedAt } : {}),
+    })
+
+    if (!result.ok) {
+      setMessage({ kind: 'err', text: result.error ?? 'Could not add that video.' })
+      return
+    }
+
+    setMessage({
+      kind: 'ok',
+      text: `Added “${result.video?.title}”.${
+        thumbnailUrl ? '' : ' A placeholder thumbnail was generated — paste an image URL to replace it.'
+      }`,
+    })
+    setUrl('')
+    setTitle('')
+    setAuthorName('')
+    setThumbnailUrl('')
+    setDuration('')
+    setViews('')
+    setPublished('')
+  }
+
+  return (
+    <section className="rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">Add a Bilibili video</h2>
+        <span className="rounded-full bg-chip px-2 py-0.5 text-[11px] font-medium text-fg2">
+          manual details
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Plays in an embedded Bilibili player. Everything else — title, thumbnail, duration — has
+        to be typed in, because Bilibili's API rejects browser requests.
+      </p>
+
+      <details className="mt-3 rounded-lg border border-line p-3">
+        <summary className="cursor-pointer text-[13px] font-medium text-fg">
+          Why is this different from YouTube?
+        </summary>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[12px] leading-5 text-fg2">
+          <li>
+            Bilibili's API returns <span className="text-fg">HTTP 403 with no CORS headers</span>,
+            so a browser cannot read titles, thumbnails or view counts. There is no oEmbed
+            endpoint either.
+          </li>
+          <li>
+            The player is Bilibili's own, embedded from{' '}
+            <span className="text-fg">player.bilibili.com</span>. Its logo and controls are
+            theirs, so it will not look like YouTube's player.
+          </li>
+          <li>
+            Scrolling bullet comments are switched off (
+            <span className="text-fg">danmaku=0</span>), which removes the biggest visual
+            difference.
+          </li>
+          <li>Autoplay-next does not trigger for Bilibili videos; there is no scripting API.</li>
+        </ul>
+      </details>
+
+      <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-fg2">Bilibili link</span>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.bilibili.com/video/BV1GJ411x7h7"
+            className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+          />
+        </label>
+
+        {ref ? (
+          <p className="text-[12px] text-[#2ba640]">
+            Recognised {ref.kind === 'bvid' ? `BV id ${ref.value}` : `av id ${ref.value}`}
+            {ref.page > 1 ? `, part ${ref.page}` : ''}
+          </p>
+        ) : url && shortLink ? (
+          <p className="text-[12px] text-[#ff9d00]">
+            Short b23.tv links cannot be resolved in the browser. Open it, then copy the full
+            bilibili.com address.
+          </p>
+        ) : null}
+
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-fg2">Title (required)</span>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="What the video is called"
+            className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+          />
+        </label>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Channel</span>
+            <input
+              value={authorName}
+              onChange={(e) => setAuthorName(e.target.value)}
+              placeholder="Uploader name"
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Category</span>
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Duration (optional)</span>
+            <input
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+              placeholder="12:34 or 1:02:03"
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Thumbnail URL (optional)</span>
+            <input
+              value={thumbnailUrl}
+              onChange={(e) => setThumbnailUrl(e.target.value)}
+              placeholder="https://i0.hdslb.com/…"
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+          </label>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Views (optional)</span>
+            <input
+              value={views}
+              onChange={(e) => setViews(e.target.value)}
+              placeholder="125000"
+              inputMode="numeric"
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[12px] font-medium text-fg2">Upload date (optional)</span>
+            <input
+              type="date"
+              value={published}
+              onChange={(e) => setPublished(e.target.value)}
+              className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+            />
+          </label>
+        </div>
+
+        <p className="text-[12px] leading-5 text-fg2">
+          Leave views and the date blank and the app prints no view line at all, rather than a
+          false “0 views • just now”.
+        </p>
+
+        <p className="text-[12px] leading-5 text-fg2">
+          For the thumbnail: open the video on Bilibili, right-click the image, and choose
+          <span className="text-fg"> Copy image address</span>. Leave it blank and a tidy stand-in
+          card is generated instead.
+        </p>
+
+        <button
+          type="submit"
+          disabled={!ref}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#065fd4] text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+        >
+          <PlusIcon size={20} />
+          Add to library
+        </button>
+
+        <StatusMessage message={message} />
+      </form>
+    </section>
+  )
+}
+
 function BulkAdd({ categories }: { categories: { id: string; name: string }[] }) {
   const { addVideo } = useLibrary()
   const { hasKey, enrich } = useEnrichment()
@@ -592,13 +835,38 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const ids = text
+    const lines = text
       .split(/[\n,\s]+/)
-      .map((l) => parseYouTubeId(l))
-      .filter((v): v is string => Boolean(v))
+      .map((l) => l.trim())
+      .filter(Boolean)
 
-    if (ids.length === 0) {
-      setMessage({ kind: 'err', text: 'No valid YouTube links found in that box.' })
+    // Split the pasted lines by which service they belong to.
+    const youtubeIds: string[] = []
+    const bilibiliUrls: string[] = []
+    const unusable: string[] = []
+
+    for (const line of lines) {
+      if (isBilibiliShortLink(line)) {
+        unusable.push(line)
+        continue
+      }
+      const yt = parseYouTubeId(line)
+      if (yt) {
+        youtubeIds.push(yt)
+        continue
+      }
+      if (parseBilibiliId(line)) {
+        bilibiliUrls.push(line)
+        continue
+      }
+      unusable.push(line)
+    }
+
+    if (youtubeIds.length === 0 && bilibiliUrls.length === 0) {
+      setMessage({
+        kind: 'err',
+        text: 'No valid YouTube or Bilibili links found. Note that short b23.tv links cannot be read.',
+      })
       return
     }
 
@@ -611,15 +879,16 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
         Awaited<ReturnType<typeof fetchChannelMetadata>>[number]
       >()
 
-      if (hasKey) {
-        const result = await enrich(ids)
+      if (hasKey && youtubeIds.length) {
+        const result = await enrich(youtubeIds)
         for (const v of result?.videos ?? []) metaById.set(v.id, v)
         for (const c of result?.channels ?? []) channelById.set(c.id, c)
       }
 
       let added = 0
       let skipped = 0
-      for (const id of ids) {
+
+      for (const id of youtubeIds) {
         const meta = metaById.get(id)
         const chan = meta ? channelById.get(meta.channelId) : undefined
         const result = addVideo({
@@ -643,12 +912,27 @@ function BulkAdd({ categories }: { categories: { id: string; name: string }[] })
         else skipped += 1
       }
 
-      setMessage({
-        kind: added > 0 ? 'ok' : 'err',
-        text: hasKey
-          ? `Added ${added} video${added === 1 ? '' : 's'} with full YouTube details${skipped ? `, skipped ${skipped}` : ''}.`
-          : `Added ${added} video${added === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}. No API key set, so views, likes, subscribers and durations are missing — add a key above and use "Refresh all".`,
-      })
+      // Bilibili entries cannot be enriched, so they start untitled and get a
+      // generated thumbnail. Rename them in the list below.
+      for (const url of bilibiliUrls) {
+        const result = addVideo({ url, authorName: '', categoryId })
+        if (result.ok) added += 1
+        else skipped += 1
+      }
+
+      const parts = [`Added ${added} video${added === 1 ? '' : 's'}`]
+      if (skipped) parts.push(`skipped ${skipped}`)
+      if (bilibiliUrls.length) {
+        parts.push(
+          `${bilibiliUrls.length} Bilibili entr${bilibiliUrls.length === 1 ? 'y needs' : 'ies need'} a title and thumbnail typed in`,
+        )
+      }
+      if (!hasKey && youtubeIds.length) {
+        parts.push('no API key, so YouTube details are missing until you add one and refresh')
+      }
+      if (unusable.length) parts.push(`${unusable.length} line(s) ignored`)
+
+      setMessage({ kind: added > 0 ? 'ok' : 'err', text: `${parts.join(' · ')}.` })
       if (added > 0) setText('')
     } catch (err) {
       setMessage({ kind: 'err', text: describeError(err) })
@@ -879,6 +1163,16 @@ function MyLibrary({
                     className="w-full rounded border border-transparent bg-transparent px-1 py-1 text-[14px] font-medium text-fg outline-none hover:border-line focus:border-[#1c62b9] focus:bg-search"
                   />
                   <p className="truncate px-1 text-[12px] text-fg2">
+                    <span
+                      className={classNames(
+                        'mr-1 rounded px-1 py-px text-[10px] font-medium uppercase',
+                        v.sourceType === 'bilibili'
+                          ? 'bg-[#fb7299]/20 text-[#fb7299]'
+                          : 'bg-[#ff0000]/15 text-[#ff0000]',
+                      )}
+                    >
+                      {v.sourceType}
+                    </span>
                     {channel?.name ?? 'Unknown channel'}
                     {typeof channel?.subscriberCount === 'number'
                       ? ` · ${channel.subscriberCount.toLocaleString()} subscribers`
@@ -889,6 +1183,7 @@ function MyLibrary({
                     {categoryName(v.categoryId)}
                     {' · '}
                     {v.durationSeconds > 0 ? `${v.durationSeconds}s` : 'no duration'}
+                    {v.thumbnailIsGenerated ? ' · placeholder thumbnail' : ''}
                   </p>
                 </div>
                 <button

@@ -82,6 +82,29 @@ Same steps as the iPad using **Chrome** → *Install app*. The proper APK comes 
       instructions
 - [x] "Refresh all from YouTube" to update view counts, likes and subscriber
       counts on demand
+- [x] Bilibili as a second video source, in its own card
+
+### Bilibili support, and its limits
+
+Bilibili links play in an embedded player. Three constraints are real and worth
+knowing before you add one:
+
+1. **The player is Bilibili's own.** It is embedded from `player.bilibili.com`,
+   so its logo, control bar and quality menu are theirs. It cannot be made to
+   look like YouTube's player without re-hosting their video streams, which this
+   project does not do. The scrolling bullet comments *are* switched off
+   (`danmaku=0`), because that is the most obviously un-YouTube element.
+2. **Nothing can be fetched automatically.** `api.bilibili.com` returns
+   `HTTP 403` with no `Access-Control-Allow-Origin`, and there is no oEmbed
+   endpoint. Title, channel, duration, thumbnail, views and upload date all have
+   to be typed in.
+3. **Autoplay-next does not fire.** The embed has no scripting API, so there is
+   no reliable "ended" event. Viewers pick the next video themselves.
+
+If you leave the view count and upload date blank, the app prints **no** view
+line at all rather than a false "0 views • just now". Leave the thumbnail blank
+and a tidy gradient card is generated. Note that `b23.tv` short links cannot be
+resolved in a browser — paste the full `bilibili.com/video/BV…` address.
 
 ### Why the YouTube API key matters
 

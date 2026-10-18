@@ -7,16 +7,18 @@
 export function formatCount(n: number): string {
   if (!Number.isFinite(n) || n < 0) return '0'
   if (n < 1000) return String(Math.trunc(n))
-  if (n < 1_000_000) return trimZero(n / 1000) + 'K'
-  if (n < 1_000_000_000) return trimZero(n / 1_000_000) + 'M'
-  return trimZero(n / 1_000_000_000) + 'B'
+  if (n < 1_000_000) return short(n / 1000) + 'K'
+  if (n < 1_000_000_000) return short(n / 1_000_000) + 'M'
+  return short(n / 1_000_000_000) + 'B'
 }
 
-function trimZero(v: number): string {
-  // YouTube keeps one decimal place below 100, and none above.
-  if (v >= 100) return String(Math.round(v))
-  const s = v.toFixed(1)
-  return s.endsWith('.0') ? s.slice(0, -2) : s
+/**
+ * YouTube shows one decimal place only below 10, and truncates rather than
+ * rounds: 1,234 renders as "1.2K" but 45,600 renders as "45K", not "45.6K".
+ */
+function short(v: number): string {
+  if (v < 10) return (Math.trunc(v * 10) / 10).toFixed(1).replace(/\.0$/, '')
+  return String(Math.trunc(v))
 }
 
 export function formatViews(n: number): string {
@@ -120,4 +122,63 @@ export function youTubeThumbnailChain(videoId: string): string[] {
     `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
   ]
+}
+
+/* --------------------------------------------------------------- bilibili */
+
+export interface BilibiliRef {
+  /** `bvid` for the modern BV… id, `aid` for the legacy numeric av… id. */
+  kind: 'bvid' | 'aid'
+  /** The id itself: `BV1GJ411x7h7`, or the digits of `av12345`. */
+  value: string
+  /** Multi-part videos use `?p=`; 1 when absent. */
+  page: number
+}
+
+export function isBilibiliShortLink(input: string): boolean {
+  return /(^|\/\/)b23\.tv\//i.test(input.trim())
+}
+
+/**
+ * Reads a Bilibili video id out of anything a person is likely to paste:
+ * watch URLs, embed URLs, `av…` links, or a bare id.
+ */
+export function parseBilibiliId(input: string): BilibiliRef | null {
+  const raw = input.trim()
+  if (!raw) return null
+
+  const pageMatch = raw.match(/[?&](?:p|page)=(\d+)/i)
+  const page = pageMatch ? Math.max(1, Number(pageMatch[1])) : 1
+
+  const bvid = raw.match(/BV[0-9A-Za-z]{10}/)
+  if (bvid) return { kind: 'bvid', value: bvid[0], page }
+
+  // `av12345`, `/video/av12345`, or `?aid=12345`
+  const aid = raw.match(/(?:^|[^0-9A-Za-z])(?:av|aid=)(\d{1,12})/i)
+  if (aid) return { kind: 'aid', value: aid[1], page }
+
+  return null
+}
+
+/** True when the pasted text looks like a Bilibili link at all. */
+export function looksLikeBilibili(input: string): boolean {
+  return /bilibili\.com|b23\.tv/i.test(input) || /^BV[0-9A-Za-z]{10}$/.test(input.trim())
+}
+
+/**
+ * Accepts "12:34", "1:02:03" or a plain number of seconds.
+ * Returns 0 when the value cannot be read.
+ */
+export function parseDurationInput(input: string): number {
+  const t = input.trim()
+  if (!t) return 0
+  if (/^\d+$/.test(t)) return Number(t)
+
+  const parts = t.split(':')
+  if (parts.length < 2 || parts.length > 3) return 0
+  const nums = parts.map((p) => Number(p))
+  if (nums.some((n) => !Number.isFinite(n) || n < 0)) return 0
+  return nums.length === 2
+    ? nums[0] * 60 + nums[1]
+    : nums[0] * 3600 + nums[1] * 60 + nums[2]
 }

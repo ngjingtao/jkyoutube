@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLibrary } from '../store/library'
+import { bilibiliPlaceholderThumbnail } from '../lib/bilibili'
 import {
   classNames,
   formatDuration,
@@ -34,15 +35,28 @@ function DurationBadge({ video }: { video: Video }) {
 /**
  * Thumbnail with a graceful degradation chain.
  *
- * YouTube's `hq720` does not exist for older uploads, so we fall back to
- * `hqdefault` and then `mqdefault`, and finally to a placeholder rather than
- * leaving an empty grey box if every variant 404s.
+ * YouTube: `hq720` does not exist for older uploads, so we fall back to
+ * `hqdefault` then `mqdefault`.
+ * Bilibili: there is no thumbnail API, so if the admin pasted no image URL we
+ * use a generated card rather than leaving an empty grey box in the grid.
  */
 function ThumbnailImage({ video, priority = false }: { video: Video; priority?: boolean }) {
-  const sources = useMemo(
-    () => (video.youtubeId ? youTubeThumbnailChain(video.youtubeId) : [video.thumbnailUrl]),
-    [video.youtubeId, video.thumbnailUrl],
-  )
+  const sources = useMemo(() => {
+    const list: string[] = []
+    if (video.thumbnailUrl) list.push(video.thumbnailUrl)
+
+    if (video.youtubeId) return youTubeThumbnailChain(video.youtubeId)
+
+    if (video.sourceType === 'bilibili') {
+      const generated = bilibiliPlaceholderThumbnail(
+        video.title,
+        video.bilibiliId ?? video.id,
+      )
+      if (!list.includes(generated)) list.push(generated)
+    }
+    return list
+  }, [video])
+
   const [index, setIndex] = useState(0)
   const [exhausted, setExhausted] = useState(false)
 
@@ -51,7 +65,7 @@ function ThumbnailImage({ video, priority = false }: { video: Video; priority?: 
     setExhausted(false)
   }, [video.id])
 
-  if (exhausted) {
+  if (sources.length === 0 || exhausted) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-thumbbg text-fg2">
         <PlayIcon size={40} />
@@ -134,9 +148,11 @@ export function VideoCard({
           >
             {channel?.name ?? 'Unknown'}
           </Link>
-          <div className="text-[12px] text-fg2">
-            {formatVideoMeta(video.viewCount, video.publishedAt)}
-          </div>
+          {video.statsUnknown ? null : (
+            <div className="text-[12px] text-fg2">
+              {formatVideoMeta(video.viewCount, video.publishedAt)}
+            </div>
+          )}
         </div>
 
         <button
@@ -165,9 +181,11 @@ export function VideoRow({ video, priority = false }: { video: Video; priority?:
         <Link to={`/watch/${video.id}`}>
           <h3 className="yt-clamp-2 text-[18px] font-normal leading-6 text-fg">{video.title}</h3>
         </Link>
-        <div className="mt-1 text-[12px] text-fg2">
-          {formatVideoMeta(video.viewCount, video.publishedAt)}
-        </div>
+        {video.statsUnknown ? null : (
+          <div className="mt-1 text-[12px] text-fg2">
+            {formatVideoMeta(video.viewCount, video.publishedAt)}
+          </div>
+        )}
         <Link to={`/channel/${video.channelId}`} className="mt-3 flex items-center gap-2">
           <ChannelAvatar channel={channel} size={24} />
           <span className="truncate text-[12px] text-fg2 hover:text-fg">{channel?.name}</span>
@@ -207,9 +225,11 @@ export function VideoRowCompact({
       <div className="min-w-0 flex-1 pr-2 pt-0.5">
         <h4 className="yt-clamp-2 text-[14px] font-medium leading-5 text-fg">{video.title}</h4>
         <div className="mt-1 truncate text-[12px] text-fg2">{channel?.name}</div>
-        <div className="truncate text-[12px] text-fg2">
-          {formatVideoMeta(video.viewCount, video.publishedAt)}
-        </div>
+        {video.statsUnknown ? null : (
+          <div className="truncate text-[12px] text-fg2">
+            {formatVideoMeta(video.viewCount, video.publishedAt)}
+          </div>
+        )}
       </div>
     </Link>
   )

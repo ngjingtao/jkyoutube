@@ -12,7 +12,14 @@ import {
   videos as seedVideos,
 } from '../data/mock'
 import { useLocalStorage } from '../lib/hooks'
-import { parseYouTubeId, youTubeThumbnail } from '../lib/format'
+import {
+  isBilibiliShortLink,
+  parseBilibiliId,
+  parseYouTubeId,
+  youTubeThumbnail,
+} from '../lib/format'
+import type { BilibiliRef } from '../lib/format'
+import { bilibiliPlaceholderThumbnail, bilibiliVideoId, bilibiliWatchUrl } from '../lib/bilibili'
 import type { Category, Channel, Playlist, Video } from '../types'
 
 /**
@@ -326,11 +333,28 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const addVideo = useCallback(
     (input: NewVideoInput): AddVideoResult => {
-      const videoId = parseYouTubeId(input.url)
-      if (!videoId) {
-        return { ok: false, error: 'That does not look like a YouTube link.' }
+      // b23.tv short links cannot be resolved from the browser: following the
+      // redirect needs a cross-origin request, which is blocked. Say so plainly
+      // rather than reporting a generic "not a link" error.
+      if (isBilibiliShortLink(input.url)) {
+        return {
+          ok: false,
+          error:
+            'Short b23.tv links cannot be read. Open the link in a browser, then copy the full bilibili.com/video/BV… address.',
+        }
       }
-      const duplicate = allVideos.some((v) => v.youtubeId === videoId)
+
+      const youtubeId = parseYouTubeId(input.url)
+      const bilibiliRef = youtubeId ? null : parseBilibiliId(input.url)
+
+      if (!youtubeId && !bilibiliRef) {
+        return { ok: false, error: 'That does not look like a YouTube or Bilibili link.' }
+      }
+
+      const bilibiliId = bilibiliRef ? bilibiliVideoId(bilibiliRef) : undefined
+      const duplicate = allVideos.some((v) =>
+        youtubeId ? v.youtubeId === youtubeId : v.bilibiliId === bilibiliId,
+      )
       if (duplicate) {
         return { ok: false, error: 'That video is already in your library.' }
       }
@@ -339,7 +363,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const handle = input.handle?.trim() || `@${slugify(author) || 'mychannel'}`
 
       // Prefer matching the real YouTube channel id so two different channels
-      // that happen to share a display name do not get merged.
+      // that happen to share a display name do not get merged. Name-derived ids
+      // are deterministic so a bulk add cannot create the channel twice.
       let channel = input.youtubeChannelId
         ? channels.find((c) => c.id === `ch-yt-${input.youtubeChannelId}`)
         : undefined
@@ -351,7 +376,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         channel = {
           id: input.youtubeChannelId
             ? `ch-yt-${input.youtubeChannelId}`
-            : `ch-${slugify(author) || 'mychannel'}-${Date.now().toString(36)}`,
+            : `ch-name-${slugify(author) || 'mychannel'}`,
           name: author,
           handle,
           avatarUrl: input.channelAvatarUrl ?? '',
@@ -361,8 +386,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
             : {}),
         }
         setCustomChannels((prev) =>
-          // The id is derived from the YouTube channel id, so a bulk add of
-          // several videos from one channel must not append it repeatedly.
           prev.some((c) => c.id === channel!.id) ? prev : [...prev, channel as Channel],
         )
       } else if (channel.id.startsWith('ch-yt-') || customChannels.some((c) => c.id === channel!.id)) {
@@ -384,15 +407,29 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         )
       }
 
+      const title = input.title?.trim() || 'Untitled video'
+
+      // Bilibili exposes no thumbnail API, so generate a stand-in card when the
+      // admin did not paste an image URL. Better than an empty grey box.
+      const thumbnailUrl =
+        input.thumbnailUrl ||
+        (bilibiliRef
+          ? bilibiliPlaceholderThumbnail(title, bilibiliId ?? title)
+          : youTubeThumbnail(youtubeId as string))
+
       const created: Video = {
-        id: `v-${videoId}`,
-        title: input.title?.trim() || 'Untitled video',
+        id: youtubeId ? `v-${youtubeId}` : `v-bili-${bilibiliId}`,
+        title,
         description: input.description?.trim() ?? '',
-        sourceType: 'youtube',
-        sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        youtubeId: videoId,
+        sourceType: youtubeId ? 'youtube' : 'bilibili',
+        sourceUrl: youtubeId
+          ? `https://www.youtube.com/watch?v=${youtubeId}`
+          : bilibiliWatchUrl(bilibiliRef as BilibiliRef),
+        ...(youtubeId ? { youtubeId } : {}),
+        ...(bilibiliId ? { bilibiliId } : {}),
         embeddable: true,
-        thumbnailUrl: input.thumbnailUrl || youTubeThumbnail(videoId),
+        thumbnailUrl,
+        thumbnailIsGenerated: Boolean(bilibiliRef && !input.thumbnailUrl),
         durationSeconds: input.durationSeconds ?? 0,
         channelId: channel.id,
         categoryId: input.categoryId ?? 'all',
@@ -400,6 +437,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         viewCount: input.viewCount ?? 0,
         likeCount: input.likeCount ?? 0,
         isLive: input.isLive ?? false,
+        // Bilibili exposes no statistics, so say "unknown" rather than "0 views".
+        statsUnknown: Boolean(bilibiliRef) && input.viewCount === undefined,
         status: 'published',
       }
 

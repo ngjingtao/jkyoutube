@@ -5,6 +5,8 @@ import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from
 import { ChannelAvatar } from '../components/ChannelAvatar'
 import { VideoRowCompact } from '../components/VideoCard'
 import { NativePlayer, YouTubePlayer } from '../components/player/YouTubePlayer'
+import { BilibiliPlayer } from '../components/player/BilibiliPlayer'
+import { parseBilibiliId } from '../lib/format'
 import {
   BellIcon,
   CheckIcon,
@@ -119,7 +121,8 @@ export function WatchPage() {
   const reaction = reactions[video.id] ?? null
   const saved = watchLater.includes(video.id)
   const startSeconds = Number(params.get('t') ?? 0) || 0
-  const isEmbedded = video.sourceType === 'youtube' && video.youtubeId
+  const bilibiliRef =
+    video.sourceType === 'bilibili' ? parseBilibiliId(video.sourceUrl) : null
 
   return (
     <div className="mx-auto max-w-[1754px] px-4 pb-16 pt-6 md:px-6">
@@ -127,14 +130,20 @@ export function WatchPage() {
         {/* ------------------------------------------------ primary column */}
         <div className="min-w-0 flex-1">
           <div className="overflow-hidden rounded-xl bg-black" style={{ aspectRatio: '16 / 9' }}>
-            {isEmbedded ? (
+            {video.sourceType === 'youtube' && video.youtubeId ? (
               <YouTubePlayer
-                videoId={video.youtubeId as string}
+                videoId={video.youtubeId}
                 startSeconds={startSeconds}
                 className="h-full w-full"
                 onEnded={() => {
                   if (autoplayNext && queue[0]) navigate(`/watch/${queue[0].id}`)
                 }}
+              />
+            ) : bilibiliRef ? (
+              <BilibiliPlayer
+                bilibiliRef={bilibiliRef}
+                startSeconds={startSeconds}
+                className="h-full w-full"
               />
             ) : (
               <NativePlayer src={video.sourceUrl} poster={video.thumbnailUrl} className="h-full w-full" />
@@ -218,9 +227,11 @@ export function WatchPage() {
             onClick={() => setDescOpen((v) => !v)}
             className="mt-3 w-full rounded-xl bg-chip p-3 text-left hover:bg-chip-hover"
           >
-            <div className="text-[14px] font-medium text-fg">
-              {formatViews(video.viewCount)} • {timeAgo(video.publishedAt)}
-            </div>
+            {video.statsUnknown ? null : (
+              <div className="text-[14px] font-medium text-fg">
+                {formatViews(video.viewCount)} • {timeAgo(video.publishedAt)}
+              </div>
+            )}
             <span className="float-right -mt-5 text-fg">
               {descOpen ? <ChevronUpIcon size={20} /> : <ChevronDownIcon size={20} />}
             </span>
