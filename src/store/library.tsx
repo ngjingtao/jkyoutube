@@ -127,6 +127,9 @@ interface LibraryValue {
   sampleVideoCount: number
   libraryMode: LibraryMode
   setLibraryMode: (mode: LibraryMode) => void
+  /** 0 disables YouTube suggestions. 0.25 means one in every four Up next slots. */
+  suggestionsRatio: number
+  setSuggestionsRatio: (ratio: number) => void
   addVideo: (input: NewVideoInput) => Promise<AddVideoResult>
   updateVideo: (id: string, patch: Partial<Video>) => Promise<void>
   updateChannel: (id: string, patch: Partial<Channel>) => Promise<void>
@@ -200,6 +203,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [libraryMode, setLibraryModeState] = useLocalStorage<LibraryMode>('jk.libraryMode', 'auto')
   const modeLoadedFromDb = useRef(false)
 
+  /**
+   * How much of Up next may come from YouTube search. 0 disables it entirely,
+   * which is the default because every lookup costs 100 quota units.
+   */
+  const [suggestionsRatio, setSuggestionsRatioState] = useLocalStorage<number>(
+    'jk.suggestionsRatio',
+    0,
+  )
+
   /* ------------------------------------------------------------- loading */
 
   const load = useCallback(async () => {
@@ -237,7 +249,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     void fetchSetting<LibraryMode>('libraryMode').then((mode) => {
       if (mode === 'auto' || mode === 'mine' || mode === 'samples') setLibraryModeState(mode)
     })
-  }, [setLibraryModeState])
+    void fetchSetting<number>('suggestionsRatio').then((ratio) => {
+      if (typeof ratio === 'number' && Number.isFinite(ratio)) {
+        setSuggestionsRatioState(Math.min(1, Math.max(0, ratio)))
+      }
+    })
+  }, [setLibraryModeState, setSuggestionsRatioState])
 
   /* ------------------------------------------------------------ deriving */
 
@@ -247,9 +264,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [localVideos, dbVideos],
   )
 
+  /** Videos you curated. Suggestions are excluded: they are not yours. */
+  const curatedVideos = useMemo(() => dbVideos.filter((v) => !v.suggested), [dbVideos])
+
+  /** Fetched from YouTube search, only ever shown in Up next. */
+  const suggestedVideos = useMemo(() => dbVideos.filter((v) => v.suggested), [dbVideos])
+
   const customVideos = useMemo(
-    () => [...dbVideos].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
-    [dbVideos],
+    () => [...curatedVideos].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)),
+    [curatedVideos],
   )
 
   const customChannels = useMemo(() => {
@@ -269,12 +292,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     if (libraryMode === 'samples') return true
     if (libraryMode === 'mine') return false
     // Auto: placeholders only until there is something of your own, counting
-    // both the shared library and anything still held locally.
-    return dbVideos.length === 0 && pendingLocalVideos.length === 0
-  }, [libraryMode, dbVideos.length, pendingLocalVideos.length])
+    // both the shared library and anything still held locally. Suggestions do
+    // not count as yours, or the placeholders would vanish from an empty feed.
+    return curatedVideos.length === 0 && pendingLocalVideos.length === 0
+  }, [libraryMode, curatedVideos.length, pendingLocalVideos.length])
 
   const videos = useMemo(() => {
-    const own = [...dbVideos, ...pendingLocalVideos]
+    // Curated only. Suggestions reach the viewer through Up next and nowhere
+    // else, so Home, search and channel pages stay entirely yours.
+    const own = [...curatedVideos, ...pendingLocalVideos]
     const source =
       libraryMode === 'samples' ? seedVideos : includeSamples ? [...seedVideos, ...own] : own
 
@@ -286,7 +312,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
         return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
       })
-  }, [includeSamples, libraryMode, dbVideos, pendingLocalVideos])
+  }, [includeSamples, libraryMode, curatedVideos, pendingLocalVideos])
 
   const videoById = useMemo(() => {
     const map = new Map<string, Video>()
@@ -336,12 +362,32 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     (videoId: string, limit = 20) => {
       const current = videoById.get(videoId)
       const rest = videos.filter((v) => v.id !== videoId)
-      if (!current) return rest.slice(0, limit)
-      const sameCategory = rest.filter((v) => v.categoryId === current.categoryId)
-      const others = rest.filter((v) => v.categoryId !== current.categoryId)
-      return [...sameCategory, ...others].slice(0, limit)
+      const sameCategory = current ? rest.filter((v) => v.categoryId === current.categoryId) : rest
+      const others = current ? rest.filter((v) => v.categoryId !== current.categoryId) : []
+      const local = [...sameCategory, ...others]
+
+      // Suggestions are interleaved rather than appended, so a viewer meets them
+      // in proportion instead of all at the end.
+      if (suggestionsRatio <= 0) return local.slice(0, limit)
+
+      const pool = suggestedVideos.filter((v) => v.id !== videoId)
+      if (pool.length === 0) return local.slice(0, limit)
+
+      // ratio 0.25 -> one suggestion every fourth slot.
+      const step = Math.max(2, Math.round(1 / Math.min(1, suggestionsRatio)))
+      const out: Video[] = []
+      let li = 0
+      let si = 0
+      for (let slot = 0; out.length < limit; slot++) {
+        const wantSuggestion = slot % step === step - 1
+        if (wantSuggestion && si < pool.length) out.push(pool[si++])
+        else if (li < local.length) out.push(local[li++])
+        else if (si < pool.length) out.push(pool[si++])
+        else break
+      }
+      return out
     },
-    [videos, videoById],
+    [videos, videoById, suggestedVideos, suggestionsRatio],
   )
 
   const search = useCallback(
@@ -414,6 +460,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       void saveSetting('libraryMode', mode).catch(() => undefined)
     },
     [setLibraryModeState],
+  )
+
+  const setSuggestionsRatio = useCallback(
+    (ratio: number) => {
+      const clamped = Math.min(1, Math.max(0, ratio))
+      setSuggestionsRatioState(clamped)
+      void saveSetting('suggestionsRatio', clamped).catch(() => undefined)
+    },
+    [setSuggestionsRatioState],
   )
 
   /* ------------------------------------------------------------ writing */
@@ -695,6 +750,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     sampleVideoCount: seedVideos.length,
     libraryMode,
     setLibraryMode,
+    suggestionsRatio,
+    setSuggestionsRatio,
     addVideo,
     updateVideo,
     updateChannel,

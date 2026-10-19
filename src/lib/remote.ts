@@ -28,6 +28,8 @@ interface VideoRow {
   like_count: number | string
   status: VideoStatus
   pinned: boolean
+  suggested: boolean | null
+  suggested_for: string | null
 }
 
 interface ChannelRow {
@@ -61,6 +63,8 @@ function toVideo(row: VideoRow): Video {
     likeCount: Number(row.like_count ?? 0),
     status: row.status,
     pinned: row.pinned,
+    suggested: row.suggested ?? false,
+    ...(row.suggested_for ? { suggestedFor: row.suggested_for } : {}),
   }
 }
 
@@ -85,6 +89,8 @@ function fromVideo(video: Video): VideoRow {
     like_count: video.likeCount ?? 0,
     status: video.status,
     pinned: video.pinned ?? false,
+    suggested: video.suggested ?? false,
+    suggested_for: video.suggestedFor ?? null,
   }
 }
 

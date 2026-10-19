@@ -16,6 +16,7 @@ import {
 } from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
 import { supabase } from '../lib/supabase'
+import { recentLookups } from '../lib/suggestions'
 import {
   YouTubeApiError,
   fetchChannelMetadata,
@@ -192,6 +193,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       <ApiKeyCard />
 
       <LibraryContentsCard />
+
+      <SuggestionsCard />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <AddSingleVideo categories={categories} />
@@ -370,6 +373,108 @@ function StatsCard() {
         spent on the page. "Blocked clicks" counts clicks stopped by the shield over the player —
         they cannot be told apart from a viewer trying to pause, so treat it as interest, not
         proof of a link click.
+      </p>
+    </section>
+  )
+}
+
+/* -------------------------------------------------------- suggestions ----- */
+
+const RATIOS = [0.1, 0.25, 0.5] as const
+
+/**
+ * Lets YouTube search supply part of Up next.
+ *
+ * The quota is the reason this is off by default and cached: `search.list` costs
+ * 100 units against a 10,000/day free allowance, so 100 lookups a day at most.
+ * A lookup is cached per seed video for 24 hours.
+ */
+function SuggestionsCard() {
+  const { suggestionsRatio, setSuggestionsRatio } = useLibrary()
+  const [apiKey] = useLocalStorage('jk.youtubeApiKey', '')
+  const [lookups, setLookups] = useState<number | null>(null)
+
+  const enabled = suggestionsRatio > 0
+  const percent = Math.round(suggestionsRatio * 100)
+
+  useEffect(() => {
+    void recentLookups().then(setLookups).catch(() => setLookups(null))
+  }, [suggestionsRatio])
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">YouTube suggestions in Up next</h2>
+        <span
+          className={classNames(
+            'rounded-full px-2 py-0.5 text-[11px] font-medium',
+            enabled ? 'bg-[#2ba640]/15 text-[#2ba640]' : 'bg-chip text-fg2',
+          )}
+        >
+          {enabled ? `On, ${percent}%` : 'Off'}
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        When on, a share of the <strong className="font-medium text-fg">Up next</strong> column is
+        filled with videos YouTube finds for the video being watched. They never appear on Home, in
+        search or on channel pages.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setSuggestionsRatio(enabled ? 0 : 0.25)}
+          className={classNames(
+            'rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+            enabled ? 'bg-chip-on text-chip-on-fg' : 'bg-chip text-fg hover:bg-chip-hover',
+          )}
+        >
+          {enabled ? 'Turn off' : 'Turn on'}
+        </button>
+
+        {RATIOS.map((r) => {
+          const active = Math.abs(suggestionsRatio - r) < 0.001
+          return (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setSuggestionsRatio(r)}
+              className={classNames(
+                'rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+                active ? 'bg-chip-on text-chip-on-fg' : 'bg-chip text-fg hover:bg-chip-hover',
+              )}
+            >
+              {Math.round(r * 100)}%
+            </button>
+          )
+        })}
+      </div>
+
+      {!apiKey.trim() ? (
+        <p className="mt-3 flex items-start gap-2 text-[12px] leading-5 text-[#ff9d00]">
+          <AlertIcon size={16} className="mt-px shrink-0" />
+          <span>Needs the YouTube Data API key above. Without it this switch does nothing.</span>
+        </p>
+      ) : null}
+
+      <p className="mt-3 text-[12px] leading-5 text-fg2">
+        <strong className="font-medium text-fg">Quota matters here.</strong> Each lookup costs 100
+        units of a 10,000/day free allowance, so at most 100 a day. Lookups are cached per video for
+        24 hours, so rewatching costs nothing extra.
+        {lookups !== null ? (
+          <>
+            {' '}
+            Lookups in the last 24 hours:{' '}
+            <strong className="font-medium text-fg">{lookups}</strong> of about 100.
+          </>
+        ) : null}
+      </p>
+
+      <p className="mt-2 text-[12px] leading-5 text-fg2">
+        Suggestions arrive without durations or view counts, because YouTube's search endpoint does
+        not return them, so those cards show no duration badge and no view line rather than a false
+        zero.
       </p>
     </section>
   )

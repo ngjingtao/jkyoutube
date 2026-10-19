@@ -53,6 +53,14 @@ export interface Video {
    * a misleading "0 views • just now".
    */
   statsUnknown?: boolean
+  /**
+   * True when this row came from a YouTube search rather than from you.
+   * Suggestions are kept out of Home, search and channel pages, and only ever
+   * appear in the Up next column.
+   */
+  suggested?: boolean
+  /** The video id this was suggested from. Doubles as the cache key. */
+  suggestedFor?: string
   status: VideoStatus
   pinned?: boolean
 }

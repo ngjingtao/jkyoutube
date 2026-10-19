@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLibrary } from '../store/library'
 import { track } from '../lib/analytics'
+import { ensureSuggestions } from '../lib/suggestions'
+import { useLocalStorage } from '../lib/hooks'
 import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from '../lib/format'
 import { ChannelAvatar } from '../components/ChannelAvatar'
 import { VideoRowCompact } from '../components/VideoCard'
@@ -91,7 +93,11 @@ export function WatchPage() {
     toggleWatchLater,
     isSubscribed,
     toggleSubscribe,
+    suggestionsRatio,
+    reload,
   } = useLibrary()
+
+  const [ytApiKey] = useLocalStorage('jk.youtubeApiKey', '')
 
   const video = getVideo(id)
   const [descOpen, setDescOpen] = useState(false)
@@ -192,6 +198,25 @@ export function WatchPage() {
       positionSeconds: Math.round(lastPositionRef.current),
     })
   }, [])
+
+  /**
+   * Pull in YouTube suggestions for this video, when the owner has enabled them.
+   *
+   * Guarded three ways because a lookup costs 100 quota units: off by default,
+   * requires an API key, and the fetch layer caches per seed for 24 hours. The
+   * ref stops a re-run for the same video after the store reloads.
+   */
+  const filledForRef = useRef('')
+  useEffect(() => {
+    if (!video || suggestionsRatio <= 0 || !ytApiKey.trim()) return
+    if (filledForRef.current === video.id) return
+    filledForRef.current = video.id
+
+    void (async () => {
+      const added = await ensureSuggestions(video, ytApiKey, suggestionsRatio)
+      if (added.length > 0) await reload()
+    })()
+  }, [video, suggestionsRatio, ytApiKey, reload])
 
   if (!video) {
     return (

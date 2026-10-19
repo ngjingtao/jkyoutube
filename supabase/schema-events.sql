@@ -1,7 +1,12 @@
--- Watch telemetry.
+-- Watch telemetry and YouTube suggestion storage.
 --
 -- Paste into the Supabase SQL Editor and Run, after supabase/schema.sql.
 -- Safe to run more than once.
+--
+-- This one file covers BOTH features:
+--   1. view_events + video_stats  -> the Watch statistics card
+--   2. videos.suggested / suggested_for + the suggestion cache
+--      -> YouTube suggestions mixed into Up next
 --
 -- Deliberately pure ASCII. An earlier version used em dashes and curly quotes
 -- in these comments, and PowerShell's Get-Content mangled them when the file
@@ -77,3 +82,73 @@ group by video_id;
 -- Views bypass row-level security on the underlying table by default, which
 -- would expose everything to the public key. Force the caller's own rules.
 alter view public.video_stats set (security_invoker = true);
+
+
+-- ---------------------------------------------------------------------------
+-- YouTube suggestions
+-- ---------------------------------------------------------------------------
+--
+-- A suggestion is stored as a normal row in public.videos with suggested = true.
+-- That way it plays through exactly the same path as everything else, with no
+-- special cases in the watch page or the player.
+--
+-- The curated feed must never contain them, so the app filters them out of Home,
+-- search and channel pages. They only appear in Up next.
+
+alter table public.videos add column if not exists suggested boolean not null default false;
+alter table public.videos add column if not exists suggested_for text;
+
+create index if not exists videos_suggested_idx on public.videos (suggested);
+create index if not exists videos_suggested_for_idx on public.videos (suggested_for);
+
+-- The viewer is anonymous, so it has to be able to record what it fetched.
+-- The check makes that narrow: anonymous callers may ONLY insert rows flagged as
+-- suggestions, so nothing can ever be injected into the curated feed. There is
+-- still no UPDATE or DELETE policy for anonymous callers.
+drop policy if exists "anon may insert suggestions" on public.videos;
+create policy "anon may insert suggestions"
+  on public.videos for insert
+  to anon
+  with check (suggested = true);
+
+-- Cache of past lookups, keyed by the video the suggestions came from. One
+-- search.list call costs 100 quota units against a free allowance of 10,000 per
+-- day, which is only 100 searches, so the same seed must not be looked up again
+-- within the cache window.
+create table if not exists public.suggestion_cache (
+  seed_video_id text primary key,
+  fetched_at    timestamptz not null default now(),
+  result_count  integer not null default 0
+);
+
+alter table public.suggestion_cache enable row level security;
+
+drop policy if exists "anyone may record a lookup" on public.suggestion_cache;
+create policy "anyone may record a lookup"
+  on public.suggestion_cache for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "anyone may refresh a lookup" on public.suggestion_cache;
+create policy "anyone may refresh a lookup"
+  on public.suggestion_cache for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "owner reads lookups" on public.suggestion_cache;
+create policy "owner reads lookups"
+  on public.suggestion_cache for select
+  to authenticated
+  using (true);
+
+-- Channels for suggestions have to exist or the cards would read "Unknown".
+-- Narrow on purpose: anonymous callers may only add rows whose id uses the
+-- ch-yt- prefix that is reserved for YouTube-derived channels.
+drop policy if exists "anon may insert suggested channels" on public.channels;
+create policy "anon may insert suggested channels"
+  on public.channels for insert
+  to anon
+  with check (id like 'ch-yt-%');
+
+
