@@ -109,12 +109,17 @@ export function WatchPage() {
   /**
    * Whether to offer the in-app fill-screen mode.
    *
-   * Only where the platform cannot do it natively. iOS never supports the
-   * Fullscreen API for elements, and video fullscreen inside a cross-origin
-   * iframe does not work in an installed web app — so on the iPad the player's
-   * own button does nothing and this is the only way to get a big picture.
+   * YouTube supplies its own fullscreen control, so there it is only needed where
+   * the platform cannot do real fullscreen — iOS, where the Fullscreen API does
+   * not exist for elements and video fullscreen inside a cross-origin iframe does
+   * not work in an installed web app.
+   *
+   * Bilibili's embed shows no fullscreen control of its own, so this is the ONLY
+   * route to a big picture for those videos, on every platform. Hiding it there
+   * left Bilibili with no fullscreen at all.
    */
-  const canFillScreen = !document.fullscreenEnabled
+  const canFillScreen =
+    video?.sourceType === 'bilibili' || !document.fullscreenEnabled
 
   // Fill-screen hides the header and guide by classing <body>, which is the only
   // thing that can reach outside this component's subtree.
