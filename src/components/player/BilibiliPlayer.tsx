@@ -5,54 +5,59 @@ import type { BilibiliRef } from '../../lib/format'
  * Bilibili playback.
  *
  * This is a plain iframe to Bilibili's official embed player — the only
- * supported way to play their videos. Everything visible inside it belongs to
- * Bilibili and is rendered by their code in a cross-origin frame, so it cannot
- * be restyled, hidden or scripted from here.
+ * supported way to play their videos. Everything inside it belongs to Bilibili
+ * and is rendered by their code in a cross-origin frame.
  *
- * Two things were verified rather than assumed:
+ * Verified, not assumed: there is NO way to control this player.
+ *   - `window.addEventListener("message")` occurs zero times in their bundle, so
+ *     it does not accept commands from the parent page. The two
+ *     `addEventListener("message")` hits are a setImmediate polyfill and a
+ *     `MediaKeySession` DRM handler, unrelated to playback.
+ *   - it does not post to the parent either, so there is no way to detect that a
+ *     video ended.
+ *   - the classic NanoEmbed parameters that used to hide their overlay UI
+ *     (hideCoverInfo, noShareButton, hideDanmakuButton, noFullScreenButton,
+ *     hideRecommend, autonext) occur zero times in the current bundle.
  *
- *  1. There is NO player parameter that hides their overlay UI. The classic
- *     NanoEmbed parameters (hideCoverInfo, noShareButton, hideDanmakuButton,
- *     noFullScreenButton, hideRecommend, autonext) are all absent from the
- *     current player bundle — zero occurrences — so passing them does nothing.
- *     Those overlays carry the uploader block, the follow button, "enter
- *     Bilibili", "watch in higher quality", "pop out this video", and the
- *     like/comment/share/more row, plus the end-screen recommendations.
+ * The consequence is a genuine trade-off with no clever way around it, because
+ * their player already implements YouTube's shortcuts — single click to
+ * play/pause, double click for fullscreen — and any overlay we place intercepts
+ * them before they reach it.
  *
- *  2. Their bundle leaves the page with window.open(), from a click handler
- *     covering "play", "main" and "download" targets. The sandbox below omits
- *     allow-popups, which makes every one of those a no-op.
+ * So the shield covers ONLY the top band, where their hover overlay lives: the
+ * uploader block, the follow button, "enter Bilibili", "watch in higher
+ * quality" and "pop out this video". Those are the one-click ways out, and they
+ * stay blocked. Everything below is left alone, so the shortcuts work and the
+ * control bar is untouched.
  *
- * Because the UI cannot be removed, it is blocked instead: a transparent shield
- * covers the whole player except a strip at the bottom, where the play/pause,
- * progress and fullscreen controls live. Every button listed above sits above
- * that strip, so none of them can be activated — including the end-screen
- * recommendations, which fill the middle of the frame once a video finishes.
+ * What this gives up: the recommendations shown when a video finishes fill the
+ * middle of the frame, so they are clickable again. Their pop-ups stay blocked by
+ * the sandbox, but a link that navigates inside the frame will load Bilibili
+ * within the app rather than in a new tab.
  *
- * The trade-off is deliberate: tapping the middle of the video no longer pauses
- * it, because that area is shielded. Use the play/pause button in the control
- * bar. Blocking the viewer's escape is the higher priority here.
+ * Double clicking the shielded band triggers our own fill-screen mode, since the
+ * click there cannot reach the player. That matters on iOS, where the player's
+ * own fullscreen does not work at all.
  *
- * `allow-same-origin` is required or the player loses its cookies and storage
- * and stops working, and it is safe on a cross-origin frame: the risky pairing
- * is allow-scripts + allow-same-origin on same-origin content.
- *
- * Known limit: this blocks pop-ups and clicks, not the frame navigating itself.
- * If Bilibili ever auto-advances at the end without a click, that cannot be
- * intercepted — there is no scripting API and no reliable ended event.
+ * The trade-off in one line: previously nothing could be clicked and the player
+ * felt dead; now the shortcuts behave like YouTube and the end-of-video
+ * recommendations are reachable.
  */
 export function BilibiliPlayer({
   bilibiliRef,
   autoplay = true,
   startSeconds = 0,
   onBlockedClick,
+  onToggleFullscreen,
   className,
 }: {
   bilibiliRef: BilibiliRef
   autoplay?: boolean
   startSeconds?: number
-  /** Called when the viewer clicks the shield rather than the control bar. */
+  /** Called when the viewer clicks the shielded band. */
   onBlockedClick?: () => void
+  /** Called on double click of the shielded band. */
+  onToggleFullscreen?: () => void
   className?: string
 }) {
   const src = bilibiliEmbedUrl(bilibiliRef, { autoplay, startSeconds })
@@ -71,20 +76,15 @@ export function BilibiliPlayer({
       />
 
       {/*
-        Click shield. Transparent, and by default a positioned element still
-        receives pointer events, so nothing underneath can be clicked. The gap
-        at the bottom is the player's own control bar.
-
-        Every click here is also counted, because a click in this area is
-        exactly where Bilibili puts its overlay links. It cannot be told apart
-        from a viewer trying to pause, so it is recorded as a blocked attempt
-        rather than as a link click.
+        Transparent band over their hover overlay. A positioned element receives
+        pointer events by default, so nothing underneath can be clicked, and
+        clicks here are recorded as blocked attempts.
       */}
       <div
         aria-hidden="true"
         onClick={onBlockedClick}
-        className="absolute inset-x-0 top-0 z-10 cursor-default"
-        style={{ bottom: 'max(56px, 15%)' }}
+        onDoubleClick={onToggleFullscreen}
+        className="absolute inset-x-0 top-0 z-10 h-[22%] cursor-default"
       />
     </div>
   )

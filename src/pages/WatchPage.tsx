@@ -274,6 +274,7 @@ export function WatchPage() {
                 bilibiliRef={bilibiliRef}
                 startSeconds={startSeconds}
                 onBlockedClick={handleBlocked}
+                onToggleFullscreen={() => setFillScreen((v) => !v)}
                 className="h-full w-full"
               />
             ) : (
