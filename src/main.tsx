@@ -3,12 +3,14 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { initNativeShell } from './lib/native'
+import { initAnalytics } from './lib/analytics'
 import './index.css'
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root element #root is missing from index.html')
 
 void initNativeShell()
+initAnalytics()
 
 createRoot(container).render(
   <StrictMode>

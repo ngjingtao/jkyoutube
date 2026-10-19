@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 import { useMediaQuery } from '../lib/hooks'
 import { classNames } from '../lib/format'
+import { track } from '../lib/analytics'
 
 /**
  * Header + guide + content, reproducing YouTube's responsive guide behaviour:
@@ -22,6 +23,24 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setDrawerOpen(false)
+  }, [location.pathname, location.search])
+
+  /**
+   * The "from where to where" trail: one row per route change.
+   *
+   * Recorded here rather than in the pages so that every navigation is captured,
+   * including ones that do not touch a video.
+   */
+  const previousPath = useRef<string | null>(null)
+  useEffect(() => {
+    const to = location.pathname + location.search
+    const from = previousPath.current
+    if (from !== null && from !== to) {
+      const prefix = '/watch/'
+      const videoId = to.startsWith(prefix) ? to.slice(prefix.length) : ''
+      track({ videoId, event: 'navigate', fromPath: from, toPath: to })
+    }
+    previousPath.current = to
   }, [location.pathname, location.search])
 
   useEffect(() => {

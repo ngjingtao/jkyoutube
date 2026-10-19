@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Capacitor } from '@capacitor/core'
 import { fetchOEmbed, useLibrary } from '../store/library'
@@ -6,6 +6,7 @@ import type { LibraryMode } from '../store/library'
 import { signIn, signOut } from '../lib/remote'
 import {
   classNames,
+  formatDuration,
   isBilibiliShortLink,
   parseBilibiliId,
   parseDurationInput,
@@ -14,6 +15,7 @@ import {
   youTubeThumbnail,
 } from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
+import { supabase } from '../lib/supabase'
 import {
   YouTubeApiError,
   fetchChannelMetadata,
@@ -166,6 +168,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
 
       <DiagnosticsCard />
 
+      <StatsCard />
+
       <div className="mt-6 rounded-xl border border-line bg-chip p-4">
         <p className="text-[13px] leading-5 text-fg2">
           <strong className="font-medium text-fg">Share this address</strong> with the iPad and
@@ -205,8 +209,170 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   )
 }
 
-/* ------------------------------------------------------------ diagnostics -- */
+/* ------------------------------------------------------------------ stats -- */
 
+interface VideoStat {
+  video_id: string
+  opens: number
+  blocked_clicks: number
+  viewers: number
+  duration_seconds: number
+  furthest_position: number
+  watched_seconds: number
+  first_seen: string
+  last_seen: string
+}
+
+/**
+ * What the telemetry has collected, grouped per video.
+ *
+ * Read through the video_stats view, which is security_invoker, so these rows
+ * are only visible to a signed-in account — the same public key that records
+ * events cannot read them back.
+ */
+function StatsCard() {
+  const { signedInAs, getVideo } = useLibrary()
+  const [rows, setRows] = useState<VideoStat[]>([])
+  const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (!supabase) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { data, error: queryError } = await supabase
+        .from('video_stats')
+        .select('*')
+        .order('opens', { ascending: false })
+        .limit(100)
+      if (queryError) throw new Error(queryError.message)
+      setRows((data ?? []) as VideoStat[])
+      setLoaded(true)
+    } catch (err) {
+      setError(
+        err instanceof Error && /does not exist|relation/i.test(err.message)
+          ? 'The view_events table does not exist yet. Run supabase/schema-events.sql in the Supabase SQL editor.'
+          : (err as Error).message,
+      )
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (signedInAs) void load()
+  }, [signedInAs, load])
+
+  const totals = rows.reduce(
+    (acc, r) => ({
+      opens: acc.opens + Number(r.opens ?? 0),
+      watched: acc.watched + Number(r.watched_seconds ?? 0),
+      blocked: acc.blocked + Number(r.blocked_clicks ?? 0),
+    }),
+    { opens: 0, watched: 0, blocked: 0 },
+  )
+
+  if (!signedInAs) {
+    return (
+      <section className="mt-6 rounded-xl border border-line p-4">
+        <h2 className="text-[16px] font-semibold text-fg">Watch statistics</h2>
+        <p className="mt-1 text-[13px] text-fg2">
+          Sign in to the database above to read the recorded events.
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-[16px] font-semibold text-fg">Watch statistics</h2>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
+        >
+          {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+          Refresh
+        </button>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Opens: <strong className="font-medium text-fg">{totals.opens}</strong> · Total time on
+        watch pages: <strong className="font-medium text-fg">{formatDuration(totals.watched)}</strong> ·
+        Clicks stopped inside the player:{' '}
+        <strong className="font-medium text-fg">{totals.blocked}</strong>
+      </p>
+
+      {error ? <p className="mt-2 text-[13px] leading-5 text-[#ff9d00]">{error}</p> : null}
+
+      {loaded && rows.length === 0 ? (
+        <p className="mt-3 text-[13px] text-fg2">Nothing recorded yet.</p>
+      ) : null}
+
+      {rows.length > 0 ? (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-[12px]">
+            <thead className="text-fg2">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Video</th>
+                <th className="py-1 pr-3 font-medium">Opens</th>
+                <th className="py-1 pr-3 font-medium">Viewers</th>
+                <th className="py-1 pr-3 font-medium">Time watched</th>
+                <th className="py-1 pr-3 font-medium">Furthest point</th>
+                <th className="py-1 pr-3 font-medium">Blocked clicks</th>
+                <th className="py-1 pr-3 font-medium">Last seen</th>
+              </tr>
+            </thead>
+            <tbody className="text-fg">
+              {rows.map((r) => {
+                const video = getVideo(r.video_id)
+                const length = Number(r.duration_seconds ?? 0)
+                const furthest = Number(r.furthest_position ?? 0)
+                return (
+                  <tr key={r.video_id} className="border-t border-line">
+                    <td className="max-w-[280px] py-1.5 pr-3">
+                      <span className="yt-clamp-1 block">
+                        {video?.title ?? r.video_id}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums">{r.opens}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{r.viewers}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">
+                      {formatDuration(Number(r.watched_seconds ?? 0))}
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums">
+                      {length > 0
+                        ? `${formatDuration(furthest)} of ${formatDuration(length)}`
+                        : furthest > 0
+                          ? formatDuration(furthest)
+                          : '—'}
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums">{r.blocked_clicks}</td>
+                    <td className="py-1.5 pr-3 text-fg2">{timeAgo(r.last_seen)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      <p className="mt-3 text-[12px] leading-5 text-fg2">
+        "Furthest point" comes from the YouTube player, which reports real playback positions.
+        Bilibili's embed exposes no events, so for those videos the only measurable figure is time
+        spent on the page. "Blocked clicks" counts clicks stopped by the shield over the player —
+        they cannot be told apart from a viewer trying to pause, so treat it as interest, not
+        proof of a link click.
+      </p>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------ diagnostics -- */
 interface DiagRow {
   label: string
   value: string

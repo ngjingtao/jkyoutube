@@ -45,11 +45,14 @@ export function BilibiliPlayer({
   bilibiliRef,
   autoplay = true,
   startSeconds = 0,
+  onBlockedClick,
   className,
 }: {
   bilibiliRef: BilibiliRef
   autoplay?: boolean
   startSeconds?: number
+  /** Called when the viewer clicks the shield rather than the control bar. */
+  onBlockedClick?: () => void
   className?: string
 }) {
   const src = bilibiliEmbedUrl(bilibiliRef, { autoplay, startSeconds })
@@ -71,10 +74,16 @@ export function BilibiliPlayer({
         Click shield. Transparent, and by default a positioned element still
         receives pointer events, so nothing underneath can be clicked. The gap
         at the bottom is the player's own control bar.
+
+        Every click here is also counted, because a click in this area is
+        exactly where Bilibili puts its overlay links. It cannot be told apart
+        from a viewer trying to pause, so it is recorded as a blocked attempt
+        rather than as a link click.
       */}
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-0 z-10"
+        onClick={onBlockedClick}
+        className="absolute inset-x-0 top-0 z-10 cursor-default"
         style={{ bottom: 'max(56px, 15%)' }}
       />
     </div>

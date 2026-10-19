@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLibrary } from '../store/library'
+import { track } from '../lib/analytics'
 import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from '../lib/format'
 import { ChannelAvatar } from '../components/ChannelAvatar'
 import { VideoRowCompact } from '../components/VideoCard'
@@ -124,6 +125,74 @@ export function WatchPage() {
     window.scrollTo({ top: 0 })
   }, [video, addToHistory])
 
+  /* ------------------------------------------------------------- telemetry */
+  //
+  // Held in refs so the cleanup handler can read the final values without
+  // re-subscribing. Nothing here is allowed to affect playback.
+
+  const watchStartRef = useRef(0)
+  const lastPositionRef = useRef(0)
+  const lastDurationRef = useRef(0)
+  const videoIdRef = useRef('')
+  const sourceTypeRef = useRef('')
+
+  useEffect(() => {
+    if (!video) return
+    const id = video.id
+    const sourceType = video.sourceType
+    videoIdRef.current = id
+    sourceTypeRef.current = sourceType
+    watchStartRef.current = Date.now()
+    lastPositionRef.current = 0
+    lastDurationRef.current = 0
+
+    track({ videoId: id, event: 'open', sourceType })
+
+    return () => {
+      // Leaving this video: record how long it was open, and how far in it got.
+      // For Bilibili this is the only measurable figure, because its embed
+      // exposes no playback events at all.
+      track({
+        videoId: id,
+        event: 'progress',
+        sourceType,
+        watchedSeconds: Math.round((Date.now() - watchStartRef.current) / 1000),
+        positionSeconds: Math.round(lastPositionRef.current),
+        durationSeconds: Math.round(lastDurationRef.current),
+      })
+    }
+  }, [video])
+
+  /** Real playback positions, YouTube only. */
+  const handleProgress = useCallback((position: number, duration: number) => {
+    lastPositionRef.current = position
+    lastDurationRef.current = duration
+    track({
+      videoId: videoIdRef.current,
+      event: 'progress',
+      sourceType: sourceTypeRef.current,
+      positionSeconds: Math.round(position),
+      durationSeconds: Math.round(duration),
+      watchedSeconds: Math.round((Date.now() - watchStartRef.current) / 1000),
+    })
+  }, [])
+
+  /**
+   * Counts a click stopped by our shield.
+   *
+   * It cannot be distinguished from a viewer trying to pause, so it is recorded
+   * as a blocked attempt rather than a link click. It is still a genuine signal
+   * that someone reached for something inside the player.
+   */
+  const handleBlocked = useCallback(() => {
+    track({
+      videoId: videoIdRef.current,
+      event: 'blocked',
+      sourceType: sourceTypeRef.current,
+      positionSeconds: Math.round(lastPositionRef.current),
+    })
+  }, [])
+
   if (!video) {
     return (
       <div className="px-6 py-24 text-center">
@@ -169,6 +238,8 @@ export function WatchPage() {
                 videoId={video.youtubeId}
                 startSeconds={startSeconds}
                 className="h-full w-full"
+                onProgress={handleProgress}
+                onShieldClick={handleBlocked}
                 onEnded={() => {
                   if (autoplayNext && queue[0]) navigate(`/watch/${queue[0].id}`)
                 }}
@@ -177,6 +248,7 @@ export function WatchPage() {
               <BilibiliPlayer
                 bilibiliRef={bilibiliRef}
                 startSeconds={startSeconds}
+                onBlockedClick={handleBlocked}
                 className="h-full w-full"
               />
             ) : (

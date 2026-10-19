@@ -135,6 +135,8 @@ export function YouTubePlayer({
   startSeconds = 0,
   onEnded,
   onError,
+  onProgress,
+  onShieldClick,
   className,
 }: {
   videoId: string
@@ -142,6 +144,10 @@ export function YouTubePlayer({
   startSeconds?: number
   onEnded?: () => void
   onError?: (error: PlayerError) => void
+  /** Called about every ten seconds with the real playback position. */
+  onProgress?: (positionSeconds: number, durationSeconds: number) => void
+  /** Called when the viewer clicks the shielded top band of the player. */
+  onShieldClick?: () => void
   className?: string
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -154,14 +160,17 @@ export function YouTubePlayer({
   const endedRef = useRef(onEnded)
   const errorRef = useRef(onError)
   const autoplayRef = useRef(autoplay)
+  const progressRef = useRef(onProgress)
   endedRef.current = onEnded
   errorRef.current = onError
   autoplayRef.current = autoplay
+  progressRef.current = onProgress
 
   // Create the player. Re-runs when the viewer retries.
   useEffect(() => {
     let disposed = false
     let watchdog: number | undefined
+    let progressTimer: number | undefined
     setFailed(null)
 
     void loadYouTubeApi().then((ok) => {
@@ -230,11 +239,29 @@ export function YouTubePlayer({
           errorRef.current?.(NETWORK_ERROR)
         }
       }, 12_000)
+
+      // Report playback position periodically. This is the only source of real
+      // watch data: Bilibili's embed exposes nothing equivalent.
+      progressTimer = window.setInterval(() => {
+        const player = playerRef.current
+        const report = progressRef.current
+        if (!player || !report) return
+        try {
+          const position = player.getCurrentTime()
+          const duration = player.getDuration()
+          if (Number.isFinite(position) && Number.isFinite(duration) && duration > 0) {
+            report(position, duration)
+          }
+        } catch {
+          /* player not ready */
+        }
+      }, 10_000)
     })
 
     return () => {
       disposed = true
       if (watchdog !== undefined) window.clearTimeout(watchdog)
+      if (progressTimer !== undefined) window.clearInterval(progressTimer)
       try {
         playerRef.current?.destroy()
       } catch {
@@ -293,7 +320,12 @@ export function YouTubePlayer({
       */}
       <button
         type="button"
-        onClick={togglePlayback}
+        onClick={() => {
+          // A click in this band is also a click that would otherwise have
+          // reached YouTube's title link, so it counts as a blocked attempt.
+          onShieldClick?.()
+          togglePlayback()
+        }}
         aria-label="Play or pause"
         className="absolute inset-x-0 top-0 z-10 h-[18%] min-h-[52px] cursor-default bg-transparent"
       />
