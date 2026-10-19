@@ -3,9 +3,14 @@
 -- Paste into the Supabase SQL Editor and Run, after supabase/schema.sql.
 -- Safe to run more than once.
 --
+-- Deliberately pure ASCII. An earlier version used em dashes and curly quotes
+-- in these comments, and PowerShell's Get-Content mangled them when the file
+-- was copied to the clipboard, because it reads UTF-8 as Windows-1252 unless
+-- there is a byte order mark.
+--
 -- Why anonymous inserts are allowed
---   The viewer is not signed in — only the owner has an account — so the app has
---   to record events with the public publishable key. That means anyone holding
+--   The viewer is not signed in; only the owner has an account. So the app has
+--   to record events with the public publishable key, which means anyone holding
 --   that key could add junk rows. The mitigations are:
 --     * INSERT is the ONLY thing anonymous callers may do.
 --     * There is no UPDATE or DELETE policy at all, so existing rows cannot be
@@ -18,10 +23,10 @@ create table if not exists public.view_events (
   id                bigserial primary key,
   video_id          text not null,
   session_id        text not null,
-  -- open      : the watch page was opened
-  -- progress  : a checkpoint while watching (position and elapsed time)
-  -- blocked   : the viewer clicked a link inside the embedded player
-  -- navigate  : moved from one page to another
+  -- open     : the watch page was opened
+  -- progress : a checkpoint while watching (position and elapsed time)
+  -- blocked  : the viewer clicked a link inside the embedded player
+  -- navigate : moved from one page to another
   event             text not null
                       check (event in ('open', 'progress', 'blocked', 'navigate')),
   position_seconds  integer,
@@ -54,19 +59,18 @@ create policy "owner reads events"
   to authenticated
   using (true);
 
--- Convenience views for the admin screen.
-
+-- Per video totals for the admin screen.
 create or replace view public.video_stats as
 select
   video_id,
-  count(*) filter (where event = 'open')          as opens,
-  count(*) filter (where event = 'blocked')       as blocked_clicks,
-  count(distinct session_id)                      as viewers,
-  coalesce(max(duration_seconds), 0)              as duration_seconds,
-  coalesce(max(position_seconds), 0)              as furthest_position,
-  coalesce(sum(watched_seconds), 0)               as watched_seconds,
-  min(created_at)                                 as first_seen,
-  max(created_at)                                 as last_seen
+  count(*) filter (where event = 'open')     as opens,
+  count(*) filter (where event = 'blocked')  as blocked_clicks,
+  count(distinct session_id)                 as viewers,
+  coalesce(max(duration_seconds), 0)         as duration_seconds,
+  coalesce(max(position_seconds), 0)         as furthest_position,
+  coalesce(sum(watched_seconds), 0)          as watched_seconds,
+  min(created_at)                            as first_seen,
+  max(created_at)                            as last_seen
 from public.view_events
 group by video_id;
 

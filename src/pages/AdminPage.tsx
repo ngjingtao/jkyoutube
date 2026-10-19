@@ -251,10 +251,13 @@ function StatsCard() {
       setRows((data ?? []) as VideoStat[])
       setLoaded(true)
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // PostgREST words this as "Could not find the table ... in the schema
+      // cache", which my first attempt at this message failed to recognise.
       setError(
-        err instanceof Error && /does not exist|relation/i.test(err.message)
-          ? 'The view_events table does not exist yet. Run supabase/schema-events.sql in the Supabase SQL editor.'
-          : (err as Error).message,
+        /could not find|schema cache|does not exist|relation/i.test(message)
+          ? 'Not set up yet. Run supabase/schema-events.sql in the Supabase SQL editor — that one file creates both the view_events table and the video_stats view this card reads.'
+          : message,
       )
     } finally {
       setBusy(false)
