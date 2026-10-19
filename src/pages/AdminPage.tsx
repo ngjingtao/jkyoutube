@@ -16,7 +16,7 @@ import {
   youTubeThumbnail,
 } from '../lib/format'
 import { useLocalStorage } from '../lib/hooks'
-import { supabase } from '../lib/supabase'
+import { supabase, supabasePublishableKey, supabaseUrl } from '../lib/supabase'
 import { recentLookups } from '../lib/suggestions'
 import { clearAllEvents } from '../lib/analytics'
 import {
@@ -633,7 +633,108 @@ function DiagnosticsCard() {
       verdict: 'info',
     })
 
-    // Can we reach Bilibili at all from this device?
+  /* ---------------------------------------------------- image reachability */
+  //
+  // Built after a report that thumbnails are blank on the iPad while the same
+  // page is fine on a PC. The likely cause is device-level: Screen Time's web
+  // content filter is domain based, so blocking YouTube also blocks
+  // i.ytimg.com, which serves every cover image. Loading the real thumbnail
+  // URLs, rather than just fetching a host, is what distinguishes that from a
+  // layout bug.
+  //
+  // A typical content block fails immediately rather than timing out, so the
+  // elapsed time is reported too.
+
+  interface ImageProbe {
+    label: string
+    successMs: number
+    total: number
+    failedMs: number
+    slowMs: number
+  }
+
+  const probeImages = async (label: string, urls: string[]): Promise<ImageProbe> => {
+    let successMs = 0
+    let failedMs = 0
+    let slowMs = 0
+    for (const url of urls) {
+      const started = Date.now()
+      const ok = await new Promise<boolean>((resolve) => {
+        const img = new Image()
+        const timer = window.setTimeout(() => resolve(false), 8000)
+        img.onload = () => {
+          window.clearTimeout(timer)
+          resolve(true)
+        }
+        img.onerror = () => {
+          window.clearTimeout(timer)
+          resolve(false)
+        }
+        img.src = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`
+      })
+      const took = Date.now() - started
+      slowMs = Math.max(slowMs, took)
+      if (ok) successMs++
+      else failedMs++
+    }
+    return { label, successMs, total: urls.length, failedMs, slowMs }
+  }
+
+  const youtubeThumbs = await probeImages('YouTube thumbnails', [
+    'https://i.ytimg.com/vi/dQw4w9WgXcQ/hq720.jpg',
+    'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+    'https://i.ytimg.com/vi/9bZkp7q19f0/mqdefault.jpg',
+  ])
+
+  for (const probe of [youtubeThumbs]) {
+    const blocked = probe.failedMs > 0 && probe.slowMs < 3000
+    out.push({
+      label: probe.label,
+      value:
+        probe.failedMs === probe.total
+          ? `ALL ${probe.total} FAILED (took ${probe.slowMs}ms each)`
+          : `${probe.successMs} of ${probe.total} loaded, slowest ${probe.slowMs}ms`,
+      verdict: probe.failedMs === 0 ? 'ok' : probe.successMs === 0 ? 'bad' : 'info',
+    })
+    if (probe.failedMs > 0) {
+      out.push({
+        label: 'Thumbnail failure looks like a device filter',
+        value: blocked
+          ? 'yes - requests fail almost instantly rather than timing out, which is what a content filter does'
+          : 'unclear - they took a long time, which looks more like a slow network',
+        verdict: blocked ? 'bad' : 'info',
+      })
+    }
+  }
+
+  const bilibiliThumbs = await probeImages('Bilibili thumbnails', [
+    'https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico',
+    'https://i0.hdslb.com/bfs/archive/b2b297bdb449dfe09e49d4300a06c83cf42a8c11.jpg@480w_270h_1c.webp',
+  ])
+  out.push({
+    label: bilibiliThumbs.label,
+    value:
+      bilibiliThumbs.failedMs === bilibiliThumbs.total
+        ? `ALL ${bilibiliThumbs.total} FAILED (took ${bilibiliThumbs.slowMs}ms each)`
+        : `${bilibiliThumbs.successMs} of ${bilibiliThumbs.total} loaded, slowest ${bilibiliThumbs.slowMs}ms`,
+    verdict: bilibiliThumbs.failedMs === 0 ? 'ok' : bilibiliThumbs.successMs === 0 ? 'bad' : 'info',
+  })
+
+  // Reaching the search function also proves Supabase is reachable from here.
+  const fnReachable = await fetch(
+    `${supabaseUrl}/functions/v1/bilibili-search?q=${encodeURIComponent('test')}`,
+    { headers: { apikey: supabasePublishableKey } },
+  )
+    .then((r) => (r.ok ? 'reachable' : `HTTP ${r.status}`))
+    .catch(() => 'not reachable')
+
+  out.push({
+    label: 'Bilibili search function',
+    value: fnReachable,
+    verdict: fnReachable === 'reachable' ? 'ok' : 'info',
+  })
+
+  // Can we reach Bilibili at all from this device?
     const reachable = await new Promise<boolean>((resolve) => {
       const img = new Image()
       const timer = window.setTimeout(() => resolve(false), 8000)

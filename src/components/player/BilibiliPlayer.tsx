@@ -45,13 +45,22 @@ import type { BilibiliRef } from '../../lib/format'
  */
 export function BilibiliPlayer({
   bilibiliRef,
-  autoplay = true,
+  autoplay = false,
   startSeconds = 0,
   onBlockedClick,
   onToggleFullscreen,
   className,
 }: {
   bilibiliRef: BilibiliRef
+  /**
+   * Off by default, and deliberately so.
+   *
+   * iOS refuses to autoplay media with sound, so a player told to autoplay
+   * responds by muting itself — which is exactly the "it opens muted on the iPad
+   * but not on the PC" report. Playback now waits for a tap, which also means the
+   * browser has a user gesture to hang audio off. YouTube's embed behaves the
+   * same way, so the two are now consistent.
+   */
   autoplay?: boolean
   startSeconds?: number
   /** Called when the viewer clicks the shielded band. */
