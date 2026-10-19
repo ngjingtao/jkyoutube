@@ -18,6 +18,12 @@ import { useLocalStorage } from '../lib/hooks'
 import { supabase } from '../lib/supabase'
 import { recentLookups } from '../lib/suggestions'
 import {
+  BilibiliSearchError,
+  resultToInput,
+  searchBilibili,
+  type BilibiliSearchResult,
+} from '../lib/bilibiliSearch'
+import {
   YouTubeApiError,
   fetchChannelMetadata,
   fetchVideoMetadata,
@@ -201,6 +207,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
         <AddBilibiliVideo categories={categories} />
         <BulkAdd categories={categories} />
       </div>
+
+      <BilibiliSearchCard categories={categories} />
 
       <MyLibrary
         videos={customVideos}
@@ -1014,6 +1022,175 @@ function LibraryContentsCard() {
           <strong className="font-medium text-fg"> this browser only</strong>. On the iPad the app
           will still show the placeholders — not a bug, just the missing database.
         </span>
+      </p>
+    </section>
+  )
+}
+
+/* -------------------------------------------------- bilibili search ------- */
+
+/**
+ * Search Bilibili by keyword and pick a result to add.
+ *
+ * Worth having because a keyword search returns the cover, duration, uploader
+ * and view count — none of which can be looked up later from a pasted BV link,
+ * since Bilibili's detail and oEmbed endpoints are unreachable from a browser.
+ */
+function BilibiliSearchCard({ categories }: { categories: { id: string; name: string }[] }) {
+  const { addVideo } = useLibrary()
+  const [keyword, setKeyword] = useState('')
+  const [categoryId, setCategoryId] = useState('all')
+  const [results, setResults] = useState<BilibiliSearchResult[]>([])
+  const [busy, setBusy] = useState(false)
+  const [addingId, setAddingId] = useState<string | null>(null)
+  const [added, setAdded] = useState<Record<string, boolean>>({})
+  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string; hint?: string } | null>(
+    null,
+  )
+
+  async function doSearch(e: React.FormEvent) {
+    e.preventDefault()
+    const q = keyword.trim()
+    if (!q) return
+    setBusy(true)
+    setMessage(null)
+    try {
+      const found = await searchBilibili(q)
+      setResults(found)
+      if (found.length === 0) {
+        setMessage({ kind: 'err', text: 'Bilibili returned no results for that keyword.' })
+      }
+    } catch (err) {
+      if (err instanceof BilibiliSearchError) {
+        setMessage({ kind: 'err', text: err.message, hint: err.hint })
+      } else {
+        setMessage({ kind: 'err', text: 'Search failed.' })
+      }
+      setResults([])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function add(result: BilibiliSearchResult) {
+    setAddingId(result.bvid)
+    setMessage(null)
+    try {
+      const outcome = await addVideo({ ...resultToInput(result), categoryId })
+      if (!outcome.ok) {
+        setMessage({ kind: 'err', text: outcome.error ?? 'Could not add that video.' })
+        return
+      }
+      setAdded((prev) => ({ ...prev, [result.bvid]: true }))
+      setMessage({
+        kind: outcome.savedToDatabase ? 'ok' : 'err',
+        text: outcome.savedToDatabase
+          ? `Added “${outcome.video?.title}” to the shared library.`
+          : `Added “${outcome.video?.title}” in THIS browser only — not signed in.`,
+      })
+    } finally {
+      setAddingId(null)
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">Search Bilibili</h2>
+        <span className="rounded-full bg-chip px-2 py-0.5 text-[11px] font-medium text-fg2">
+          gets cover, duration and uploader
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Type a keyword, pick a result, and everything is filled in for you. This is the easiest way
+        to add Bilibili content: the results carry the cover image and duration, which cannot be
+        retrieved later from a pasted link.
+      </p>
+
+      <form onSubmit={doSearch} className="mt-3 flex flex-wrap gap-2">
+        <input
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder="Search keyword, e.g. 红火蚁 or marble run"
+          className="h-10 min-w-[220px] flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+        />
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          className="h-10 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+        >
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          disabled={busy || !keyword.trim()}
+          className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#065fd4] px-4 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+        >
+          {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+          Search
+        </button>
+      </form>
+
+      {message ? (
+        <div className="mt-3">
+          <StatusMessage message={{ kind: message.kind, text: message.text }} />
+          {message.hint ? (
+            <p className="mt-1 text-[12px] leading-5 text-fg2">{message.hint}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {results.length > 0 ? (
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+          {results.map((r) => (
+            <li key={r.bvid} className="flex gap-3 rounded-lg border border-line p-2">
+              <img
+                src={r.thumbnail}
+                alt=""
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                className="h-[68px] w-[120px] shrink-0 rounded object-cover bg-thumbbg"
+                onError={(e) => {
+                  ;(e.currentTarget as HTMLImageElement).style.visibility = 'hidden'
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="yt-clamp-2 text-[13px] font-medium leading-4 text-fg">{r.title}</p>
+                <p className="mt-1 truncate text-[11px] text-fg2">
+                  {r.author}
+                  {r.views > 0 ? ` · ${r.views.toLocaleString()} views` : ''}
+                  {r.durationSeconds > 0 ? ` · ${r.durationSeconds}s` : ''}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void add(r)}
+                  disabled={addingId === r.bvid || added[r.bvid]}
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-lg bg-[#065fd4] px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+                >
+                  {addingId === r.bvid ? (
+                    <SpinnerIcon size={14} className="animate-spin" />
+                  ) : added[r.bvid] ? (
+                    <CheckIcon size={14} />
+                  ) : (
+                    <PlusIcon size={14} />
+                  )}
+                  {added[r.bvid] ? 'Added' : 'Add'}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <p className="mt-3 text-[12px] leading-5 text-fg2">
+        Keywords in Chinese work best. Results come from Bilibili's own search, relayed by the
+        bilibili-search Edge Function — the browser cannot call their API directly, because it only
+        allows requests from bilibili.com itself.
       </p>
     </section>
   )
