@@ -22,6 +22,16 @@ const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
 
 export const supabaseConfigured = Boolean(url && key)
 
+/**
+ * Needed when calling an Edge Function directly with fetch().
+ *
+ * Supabase's gateway rejects an unauthenticated request to a function with
+ * HTTP 401 "Missing authorization header", before the function code even runs.
+ * The supabase-js client adds this header itself, but a plain fetch does not.
+ */
+export const supabasePublishableKey = key
+export const supabaseUrl = url
+
 export const supabase: SupabaseClient | null = supabaseConfigured
   ? createClient(url, key, {
       auth: {

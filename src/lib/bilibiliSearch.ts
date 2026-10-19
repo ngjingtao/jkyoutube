@@ -1,3 +1,4 @@
+import { supabasePublishableKey, supabaseUrl } from './supabase'
 import type { Video } from '../types'
 
 /**
@@ -9,9 +10,7 @@ import type { Video } from '../types'
  * is refused by CORS. The function relays it server-side and re-adds CORS.
  */
 
-const PROJECT_URL =
-  (import.meta.env.VITE_SUPABASE_URL as string | undefined) ??
-  'https://iixacidjgxqqbhqgouvw.supabase.co'
+const PROJECT_URL = supabaseUrl
 
 export interface BilibiliSearchResult {
   bvid: string
@@ -42,11 +41,26 @@ export async function searchBilibili(keyword: string, page = 1): Promise<Bilibil
 
   let res: Response
   try {
-    res = await fetch(url)
+    res = await fetch(url, {
+      // Supabase's gateway returns HTTP 401 before the function runs unless the
+      // request carries the project key. supabase-js does this for us; a plain
+      // fetch has to do it by hand.
+      headers: {
+        apikey: supabasePublishableKey,
+        Authorization: `Bearer ${supabasePublishableKey}`,
+      },
+    })
   } catch {
     throw new BilibiliSearchError(
       'Could not reach the search function.',
       'Check that the bilibili-search Edge Function has been deployed in Supabase.',
+    )
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new BilibiliSearchError(
+      'The search function refused the request.',
+      'That is Supabase\u2019s gateway rejecting it, not Bilibili. Confirm the bilibili-search function is deployed and set to allow the public key.',
     )
   }
 
