@@ -250,6 +250,40 @@ when real viewer accounts exist.
 The **"What the app shows"** setting *is* shared — changing it on the PC applies
 to every device.
 
+### Watch statistics
+
+The app records what viewers do, so you can see which videos are actually being
+watched — and whether anyone is reaching for a way out.
+
+**One-time setup:** paste [`supabase/schema-events.sql`](supabase/schema-events.sql)
+into the Supabase SQL editor and Run, exactly like the first schema file.
+
+Then sign in at `/admin` and open the **Watch statistics** card. Per video it
+shows opens, distinct viewers, total time watched, how far in the video got, how
+many clicks were stopped inside the player, and when it was last seen.
+
+**Why anonymous inserts are allowed here.** The viewer is never signed in, so
+recording events has to use the public publishable key. Anyone holding that key
+could add junk rows. The mitigations are that INSERT is the *only* thing
+anonymous callers may do, and there is no UPDATE or DELETE policy at all — so
+events are append-only and cannot be altered or removed through the API. The
+`video_stats` view is `security_invoker`, so it cannot be used to sidestep those
+rules either. Do not put anything sensitive in this table.
+
+**Honest limits, also shown in the admin:**
+
+| | YouTube | Bilibili |
+|---|---|---|
+| Opens, viewers, page-to-page trail | ✅ | ✅ |
+| Real playback position ("furthest point") | ✅ via the player API | ❌ no events at all |
+| Time watched | ✅ accurate | ⚠️ time the page was open, not playback |
+| Link clicks | ⚠️ counted as *blocked* attempts | ⚠️ counted as *blocked* attempts |
+
+A click inside the Bilibili player cannot be observed at all — it happens in a
+cross-origin frame and the browser exposes no event for it. And a click stopped
+by the shield cannot be told apart from a viewer trying to pause, so
+"blocked clicks" is a signal of interest, not proof of a link click.
+
 ## Android APK
 
 The APK is a thin shell around the deployed web app, so content and UI changes
