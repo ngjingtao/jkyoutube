@@ -53,13 +53,17 @@ export function BilibiliPlayer({
 }: {
   bilibiliRef: BilibiliRef
   /**
-   * Off by default, and deliberately so.
+   * Off by default, and deliberately so on iOS.
    *
    * iOS refuses to autoplay media with sound, so a player told to autoplay
    * responds by muting itself — which is exactly the "it opens muted on the iPad
-   * but not on the PC" report. Playback now waits for a tap, which also means the
-   * browser has a user gesture to hang audio off. YouTube's embed behaves the
-   * same way, so the two are now consistent.
+   * but not on the PC" report. On iOS playback therefore waits for a tap, which
+   * gives the browser a user gesture to attach audio to.
+   *
+   * Everywhere else autoplay is safe: Chrome allows it, and the Android WebView
+   * has the gesture requirement switched off by Capacitor. The caller decides,
+   * via isIOS(), so the tablet gets a silent-free experience and the phone still
+   * starts straight away.
    */
   autoplay?: boolean
   startSeconds?: number

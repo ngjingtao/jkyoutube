@@ -90,3 +90,21 @@ export function useMediaQuery(query: string): boolean {
 export function useTouchDevice(): boolean {
   return useMediaQuery('(hover: none) and (pointer: coarse)')
 }
+
+/**
+ * True on iOS and iPadOS.
+ *
+ * The second check matters: since iPadOS 13, an iPad reports its platform as
+ * "MacIntel" and is only distinguishable by the touch point count. Without it,
+ * an iPad looks like a desktop Mac and gets desktop behaviour.
+ *
+ * Used to decide whether media may autoplay. iOS refuses to autoplay media with
+ * sound, so a player told to autoplay responds by muting itself — which is worth
+ * avoiding rather than silently shipping a video that opens silent.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+}

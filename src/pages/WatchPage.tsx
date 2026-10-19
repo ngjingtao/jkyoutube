@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLibrary } from '../store/library'
 import { track } from '../lib/analytics'
 import { ensureSuggestions } from '../lib/suggestions'
-import { useLocalStorage } from '../lib/hooks'
+import { useLocalStorage, isIOS } from '../lib/hooks'
 import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from '../lib/format'
 import { ChannelAvatar } from '../components/ChannelAvatar'
 import { VideoRowCompact } from '../components/VideoCard'
@@ -273,6 +273,10 @@ export function WatchPage() {
               <BilibiliPlayer
                 bilibiliRef={bilibiliRef}
                 startSeconds={startSeconds}
+                // Autoplay everywhere it can actually work with sound. iOS
+                // refuses audible autoplay, and the player reacts by muting
+                // itself, so there it waits for a tap instead of opening silent.
+                autoplay={!isIOS()}
                 onBlockedClick={handleBlocked}
                 onToggleFullscreen={() => setFillScreen((v) => !v)}
                 className="h-full w-full"
