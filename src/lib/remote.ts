@@ -129,6 +129,21 @@ function toError(error: { message: string; code?: string }, action: string): Err
       `${action} failed because the database tables do not exist yet. Run supabase/schema.sql in the Supabase SQL editor.`,
     )
   }
+  // A missing column means an update to the schema has not been applied. PostgREST
+  // words this as "Could not find the 'priority' column of 'videos' in the schema
+  // cache", and the message is worth translating because the fix is a specific,
+  // one-time step rather than something to debug.
+  if (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    /Could not find the '[^']+' column/i.test(error.message)
+  ) {
+    const column = error.message.match(/Could not find the '([^']+)' column/i)?.[1]
+    return new Error(
+      `${action} failed because the database is missing the ${column ? `'${column}' ` : ''}column. ` +
+        'Run supabase/schema-events.sql in the Supabase SQL editor to add it. It is safe to run again.',
+    )
+  }
   if (code === '42501' || error.message.includes('row-level security')) {
     return new Error(`${action} was blocked by the database. Sign in with your admin account first.`)
   }
