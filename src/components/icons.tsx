@@ -443,47 +443,12 @@ export const SpinnerIcon = ({ size = 24, className, ...rest }: IconProps) => (
 /* --------------------------------------------------------------- branding  */
 
 /**
- * The YouTube play mark: red rounded rectangle with a white play triangle.
- * `withWordmark` renders the "YouTube" lettering beside it, as in the header.
+ * The YouTube logo, generated from YouTube's own asset.
+ *
+ * The hand-drawn version that used to live here had two faults: the play mark was
+ * 29x20 (aspect 1.45) where the real one is 152.4x109 (1.398), so the box was
+ * visibly too wide, and the wordmark was set in Roboto rather than the real
+ * letterforms. Geometry now comes from the official SVG, via
+ * scripts/generate-youtube-logo.mjs, so it cannot drift again.
  */
-export function YouTubeLogo({
-  height = 20,
-  withWordmark = true,
-  className,
-}: {
-  height?: number
-  withWordmark?: boolean
-  className?: string
-}) {
-  const markHeight = height
-  const markWidth = (markHeight * 29) / 20
-  return (
-    <span className={className} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <svg
-        viewBox="0 0 29 20"
-        width={markWidth}
-        height={markHeight}
-        aria-label="YouTube"
-        role="img"
-        style={{ display: 'block' }}
-      >
-        <rect x="0" y="0" width="29" height="20" rx="4.6" fill="#FF0000" />
-        <path d="M11.6 14.3 19.3 10l-7.7-4.3v8.6Z" fill="#fff" />
-      </svg>
-      {withWordmark ? (
-        <span
-          style={{
-            fontFamily: "'Roboto', Arial, sans-serif",
-            fontSize: markHeight * 1.06,
-            fontWeight: 700,
-            letterSpacing: '-0.055em',
-            lineHeight: 1,
-            color: 'var(--yt-fg)',
-          }}
-        >
-          YouTube
-        </span>
-      ) : null}
-    </span>
-  )
-}
+export { YouTubeLogo } from './YouTubeLogo'
