@@ -64,6 +64,16 @@ create policy "owner reads events"
   to authenticated
   using (true);
 
+-- Clearing statistics. Deliberately NOT given to anonymous callers, so the
+-- public key that records events can never wipe them. Without this policy a
+-- signed-in delete silently affects zero rows, which is why the admin screen
+-- reports how many rows it actually removed.
+drop policy if exists "owner may clear events" on public.view_events;
+create policy "owner may clear events"
+  on public.view_events for delete
+  to authenticated
+  using (true);
+
 -- Per video totals for the admin screen.
 create or replace view public.video_stats as
 select

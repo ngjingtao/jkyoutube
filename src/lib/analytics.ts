@@ -123,3 +123,37 @@ export function initAnalytics(): void {
 export function hasAnalytics(): boolean {
   return Boolean(supabase)
 }
+
+/**
+ * Permanently deletes every recorded event.
+ *
+ * Signed-in only: the table has no DELETE policy for anonymous callers, so the
+ * public key that writes these rows can never wipe them.
+ *
+ * Returns the number of rows actually removed. That number matters, because a
+ * delete blocked by row-level security succeeds while affecting zero rows rather
+ * than raising an error, so a caller that ignores the count would report success
+ * on a no-op.
+ */
+export async function clearAllEvents(): Promise<number> {
+  if (!supabase) throw new Error('The database is not configured.')
+
+  // Flush anything still queued first, or those rows would be written straight
+  // back in after the wipe.
+  if (queue.length > 0) await flush()
+
+  const { error, count } = await supabase
+    .from('view_events')
+    .delete({ count: 'exact' })
+    .gt('id', 0)
+
+  if (error) {
+    if (/could not find|schema cache|does not exist/i.test(error.message)) {
+      throw new Error(
+        'The view_events table does not exist yet. Run supabase/schema-events.sql first.',
+      )
+    }
+    throw new Error(error.message)
+  }
+  return count ?? 0
+}

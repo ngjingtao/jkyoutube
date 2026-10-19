@@ -18,6 +18,7 @@ import {
 import { useLocalStorage } from '../lib/hooks'
 import { supabase } from '../lib/supabase'
 import { recentLookups } from '../lib/suggestions'
+import { clearAllEvents } from '../lib/analytics'
 import {
   BilibiliSearchError,
   resultToInput,
@@ -248,6 +249,9 @@ function StatsCard() {
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!supabase) return
@@ -280,6 +284,34 @@ function StatsCard() {
     if (signedInAs) void load()
   }, [signedInAs, load])
 
+  /**
+   * Wipes every recorded event.
+   *
+   * The count matters: a delete blocked by row-level security returns without an
+   * error but removes nothing, so a zero here means the DELETE policy from
+   * schema-events.sql has not been applied yet.
+   */
+  async function resetStats() {
+    const hadRows = rows.length
+    setClearing(true)
+    setNotice(null)
+    setError(null)
+    try {
+      const removed = await clearAllEvents()
+      await load()
+      setConfirming(false)
+      setNotice(
+        removed === 0 && hadRows > 0
+          ? 'Nothing was deleted. The database is still refusing deletes, so run the updated supabase/schema-events.sql in the SQL editor.'
+          : `Deleted ${removed} recorded event${removed === 1 ? '' : 's'}. The statistics now start from zero.`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not clear the statistics.')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const totals = rows.reduce(
     (acc, r) => ({
       opens: acc.opens + Number(r.opens ?? 0),
@@ -304,16 +336,63 @@ function StatsCard() {
     <section className="mt-6 rounded-xl border border-line p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-[16px] font-semibold text-fg">Watch statistics</h2>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={busy}
-          className="inline-flex items-center gap-2 rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
-        >
-          {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
+          >
+            {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(true)
+              setNotice(null)
+            }}
+            disabled={clearing}
+            className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-[#ff4e45] hover:bg-chip-hover disabled:opacity-40"
+          >
+            Reset
+          </button>
+        </div>
       </div>
+
+      {confirming ? (
+        <div className="mt-3 rounded-lg border border-[#ff4e45]/50 bg-[#ff4e45]/5 p-3">
+          <p className="flex items-start gap-2 text-[13px] font-medium leading-5 text-fg">
+            <AlertIcon size={18} className="mt-px shrink-0 text-[#ff4e45]" />
+            Delete all watch statistics?
+          </p>
+          <p className="mt-1 pl-6 text-[12px] leading-5 text-fg2">
+            This permanently removes every recorded event: opens, watch time, how far each video
+            got, the page-to-page trail, and the blocked-click counts.
+            <strong className="font-medium text-fg"> It cannot be undone.</strong> Your videos,
+            channels and settings are not affected. Statistics start again from zero.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 pl-6">
+            <button
+              type="button"
+              onClick={() => void resetStats()}
+              disabled={clearing}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#ff4e45] px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            >
+              {clearing ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+              Yes, delete everything
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={clearing}
+              className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <p className="mt-1 text-[13px] leading-5 text-fg2">
         Opens: <strong className="font-medium text-fg">{totals.opens}</strong> · Total time on
@@ -323,6 +402,13 @@ function StatsCard() {
       </p>
 
       {error ? <p className="mt-2 text-[13px] leading-5 text-[#ff9d00]">{error}</p> : null}
+
+      {notice ? (
+        <p className="mt-2 flex items-start gap-2 text-[13px] leading-5 text-[#2ba640]">
+          <CheckIcon size={16} className="mt-px shrink-0" />
+          {notice}
+        </p>
+      ) : null}
 
       {loaded && rows.length === 0 ? (
         <p className="mt-3 text-[13px] text-fg2">Nothing recorded yet.</p>
