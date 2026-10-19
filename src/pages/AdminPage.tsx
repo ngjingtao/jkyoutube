@@ -2264,7 +2264,19 @@ function MyLibrary({
                   <span>Priority</span>
                   <select
                     value={normalizePriority(v.priority)}
-                    onChange={(e) => void updateVideo(v.id, { priority: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const next = Number(e.target.value)
+                      void updateVideo(v.id, { priority: next }).then((saved) => {
+                        setMessage(
+                          saved
+                            ? { kind: 'ok', text: `Priority set to ${next}.` }
+                            : {
+                                kind: 'err',
+                                text: 'Priority changed on screen but was NOT saved. Sign in to the database, then set it again.',
+                              },
+                        )
+                      })
+                    }}
                     title="1 to 5. 5 turns up near the top of Home most often; 1 least often."
                     className="h-8 rounded border border-line bg-search px-1 text-[12px] text-fg outline-none focus:border-[#1c62b9]"
                   >

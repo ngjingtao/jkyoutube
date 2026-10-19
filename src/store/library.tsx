@@ -131,7 +131,7 @@ interface LibraryValue {
   suggestionsRatio: number
   setSuggestionsRatio: (ratio: number) => void
   addVideo: (input: NewVideoInput) => Promise<AddVideoResult>
-  updateVideo: (id: string, patch: Partial<Video>) => Promise<void>
+  updateVideo: (id: string, patch: Partial<Video>) => Promise<boolean>
   updateChannel: (id: string, patch: Partial<Channel>) => Promise<void>
   removeVideo: (id: string) => Promise<void>
   clearAllVideos: () => Promise<void>
@@ -618,22 +618,26 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   )
 
   const updateVideo = useCallback(
-    async (id: string, patch: Partial<Video>) => {
+    async (id: string, patch: Partial<Video>): Promise<boolean> => {
       const isLocal = localVideos.some((v) => v.id === id) && !dbVideos.some((v) => v.id === id)
       if (isLocal) {
         setLocalVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
-        return
+        return true
       }
       if (!signedInAs) {
         setDbVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
-        return
+        return false
       }
+      let persisted = false
       try {
         await patchVideoRow(id, patch)
+        persisted = true
       } catch {
-        /* fall through to the local update so the UI stays consistent */
+        // Fall through to the local update so the interface stays consistent,
+        // but report the failure to the caller instead of pretending it saved.
       }
       setDbVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+      return persisted
     },
     [localVideos, dbVideos, signedInAs, setLocalVideos],
   )

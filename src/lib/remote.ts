@@ -208,6 +208,10 @@ export async function patchVideoRow(id: string, patch: Partial<Video>): Promise<
     channelId: 'channel_id',
     status: 'status',
     pinned: 'pinned',
+    // Missing from this map for a while: the admin's Priority selector updated
+    // the screen but never reached the database, and because the write error was
+    // swallowed it looked as though it had saved until the next reload.
+    priority: 'priority',
   }
   for (const [key, column] of Object.entries(map)) {
     if (key in patch) row[column] = (patch as Record<string, unknown>)[key]
