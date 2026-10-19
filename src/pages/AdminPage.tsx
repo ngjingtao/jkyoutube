@@ -8,6 +8,7 @@ import {
   classNames,
   formatDuration,
   isBilibiliShortLink,
+  normalizePriority,
   parseBilibiliId,
   parseDurationInput,
   parseYouTubeId,
@@ -2064,6 +2065,21 @@ function MyLibrary({
                     {v.thumbnailIsGenerated ? ' · placeholder thumbnail' : ''}
                   </p>
                 </div>
+                <label className="flex items-center gap-1 text-[12px] text-fg2">
+                  <span>Priority</span>
+                  <select
+                    value={normalizePriority(v.priority)}
+                    onChange={(e) => void updateVideo(v.id, { priority: Number(e.target.value) })}
+                    title="1 to 5. 5 turns up near the top of Home most often; 1 least often."
+                    className="h-8 rounded border border-line bg-search px-1 text-[12px] text-fg outline-none focus:border-[#1c62b9]"
+                  >
+                    {[5, 4, 3, 2, 1].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="button"
                   onClick={() => refreshOne(v)}

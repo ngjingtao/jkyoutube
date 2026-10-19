@@ -61,6 +61,11 @@ export interface Video {
   suggested?: boolean
   /** The video id this was suggested from. Doubles as the cache key. */
   suggestedFor?: string
+  /**
+   * 1 to 5, where 5 is most likely to appear near the top of Home. Home is
+   * shuffled on every visit and this is the weight.
+   */
+  priority?: number
   status: VideoStatus
   pinned?: boolean
 }

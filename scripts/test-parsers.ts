@@ -10,10 +10,12 @@ import {
   formatCount,
   formatDuration,
   isBilibiliShortLink,
+  normalizePriority,
   parseBilibiliId,
   parseDurationInput,
   parseYouTubeId,
   timeAgo,
+  weightedShuffle,
 } from '../src/lib/format.ts'
 import { parseIsoDuration } from '../src/lib/youtube.ts'
 
@@ -108,6 +110,39 @@ const now = new Date('2026-01-10T12:00:00Z')
 check('2 hours ago', timeAgo('2026-01-10T10:00:00Z', now), '2 hours ago')
 check('1 day ago', timeAgo('2026-01-09T12:00:00Z', now), '1 day ago')
 check('3 days ago', timeAgo('2026-01-07T12:00:00Z', now), '3 days ago')
+
+console.log('\n--- home ordering (weighted shuffle) ---')
+
+{
+  const pair = [
+    { id: 'low', p: 1 },
+    { id: 'high', p: 5 },
+  ]
+  const rounds = 6000
+  let highFirst = 0
+  const orders = new Set<string>()
+  for (let i = 0; i < rounds; i++) {
+    const out = weightedShuffle(pair, (x) => normalizePriority(x.p))
+    orders.add(out.map((x) => x.id).join(','))
+    if (out[0].id === 'high') highFirst++
+  }
+  const share = highFirst / rounds
+  // Theory says 5/(5+1) = 0.833.
+  console.log(`      priority 5 came first ${(share * 100).toFixed(1)}% of the time (theory 83.3%)`)
+  check('priority 5 usually beats priority 1', share > 0.75 && share < 0.9, true)
+  check('both orders really do occur', orders.size, 2)
+
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: `v${i}`, p: (i % 5) + 1 }))
+  const shuffled = weightedShuffle(many, (x) => normalizePriority(x.p))
+  check('nothing is lost', shuffled.length, 40)
+  check('no duplicates', new Set(shuffled.map((x) => x.id)).size, 40)
+  check('not left in the original order', shuffled.map((x) => x.id).join() === many.map((x) => x.id).join(), false)
+
+  check('priority above range clamps to 5', normalizePriority(99), 5)
+  check('priority below range clamps to 1', normalizePriority(0), 1)
+  check('missing priority defaults to 3', normalizePriority(undefined), 3)
+  check('priority 4.6 rounds to 5', normalizePriority(4.6), 5)
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`)
 process.exit(failed === 0 ? 0 : 1)

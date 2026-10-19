@@ -85,6 +85,27 @@ alter view public.video_stats set (security_invoker = true);
 
 
 -- ---------------------------------------------------------------------------
+-- Show priority
+-- ---------------------------------------------------------------------------
+--
+-- 1 to 5, where 5 is the most likely to appear near the top of Home. The home
+-- page is shuffled every visit, and this value is the weight: a 5 turns up early
+-- far more often than a 1, but the order is never fixed.
+
+alter table public.videos add column if not exists priority integer not null default 3;
+
+do $$
+begin
+  alter table public.videos
+    add constraint videos_priority_range check (priority between 1 and 5);
+exception
+  when duplicate_object then null;
+end $$;
+
+create index if not exists videos_priority_idx on public.videos (priority desc);
+
+
+-- ---------------------------------------------------------------------------
 -- YouTube suggestions
 -- ---------------------------------------------------------------------------
 --

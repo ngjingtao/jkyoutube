@@ -30,6 +30,7 @@ interface VideoRow {
   pinned: boolean
   suggested: boolean | null
   suggested_for: string | null
+  priority: number | null
 }
 
 interface ChannelRow {
@@ -65,6 +66,7 @@ function toVideo(row: VideoRow): Video {
     pinned: row.pinned,
     suggested: row.suggested ?? false,
     ...(row.suggested_for ? { suggestedFor: row.suggested_for } : {}),
+    priority: row.priority ?? 3,
   }
 }
 
@@ -91,6 +93,7 @@ function fromVideo(video: Video): VideoRow {
     pinned: video.pinned ?? false,
     suggested: video.suggested ?? false,
     suggested_for: video.suggestedFor ?? null,
+    priority: video.priority ?? 3,
   }
 }
 

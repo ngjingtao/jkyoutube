@@ -82,6 +82,34 @@ export function classNames(...parts: Array<string | false | null | undefined>): 
   return parts.filter(Boolean).join(' ')
 }
 
+/**
+ * Weighted random shuffle: higher weight is more likely to come first.
+ *
+ * Uses the Efraimidis-Spirakis method, which gives a proper weighted random
+ * permutation in one pass without replacement. The key is `random^(1/weight)`
+ * sorted descending, so weight 5 lands near the front far more often than
+ * weight 1, but the order is never fixed.
+ *
+ * Two videos of the same weight are equally likely in either position, which is
+ * what makes Home feel different on each visit.
+ */
+export function weightedShuffle<T>(items: T[], weightOf: (item: T) => number): T[] {
+  return items
+    .map((item) => {
+      const weight = Math.max(0.05, weightOf(item))
+      return { item, key: Math.pow(Math.random(), 1 / weight) }
+    })
+    .sort((a, b) => b.key - a.key)
+    .map((entry) => entry.item)
+}
+
+/** Clamps a stored priority into the 1-5 range, defaulting to 3. */
+export function normalizePriority(value: unknown): number {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n)) return 3
+  return Math.min(5, Math.max(1, n))
+}
+
 /** Pull the 11-character video id out of any common YouTube URL shape. */
 export function parseYouTubeId(input: string): string | null {
   const raw = input.trim()
