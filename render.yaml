@@ -49,14 +49,26 @@ services:
         destination: /index.html
 
     headers:
-      # Hashed filenames are safe to cache forever.
+      # The document must never be cached for long. It is the file that names the
+      # hashed bundles, so a stale copy pins the whole app to an old build —
+      # which is exactly what happened: the previous rule targeted
+      # "/index.html", but the page is served at "/", so it never matched and
+      # Render's own "s-maxage=300" made a deploy look like it had not happened
+      # for five minutes.
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+
+      # Hashed filenames are safe to cache forever, so this comes after the rule
+      # above and overrides it.
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
-      # The document itself must never be cached, or deploys appear stale.
-      - path: /index.html
+
+      - path: /icons/*
         name: Cache-Control
-        value: no-cache, no-store, must-revalidate
+        value: public, max-age=86400
+
       - path: /manifest.webmanifest
         name: Content-Type
         value: application/manifest+json

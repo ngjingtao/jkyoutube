@@ -215,8 +215,10 @@ function adaptiveForeground(size) {
 /** Splash: flat dark background with the mark centred. */
 function splash(width, height) {
   const buf = createBuffer(width, height, SPLASH_BG)
+  // 1.427 matches YouTube's real mark (155.8 x 109.2). The earlier 29/20 (1.45)
+  // made the box slightly too wide.
   const markHeight = Math.min(width, height) * 0.22
-  const markWidth = (markHeight * 29) / 20
+  const markWidth = markHeight * 1.427
   const cx = width / 2
   const cy = height / 2
 
