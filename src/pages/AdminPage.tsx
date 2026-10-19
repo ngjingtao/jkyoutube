@@ -636,89 +636,96 @@ function DiagnosticsCard() {
   /* ---------------------------------------------------- image reachability */
   //
   // Built after a report that thumbnails are blank on the iPad while the same
-  // page is fine on a PC. The likely cause is device-level: Screen Time's web
-  // content filter is domain based, so blocking YouTube also blocks
-  // i.ytimg.com, which serves every cover image. Loading the real thumbnail
-  // URLs, rather than just fetching a host, is what distinguishes that from a
-  // layout bug.
+  // page is fine on a PC.
   //
-  // A typical content block fails immediately rather than timing out, so the
-  // elapsed time is reported too.
+  // The first version of this was misleading: it called a fast failure a device
+  // content filter. In fact an HTTP 403 from the host fails just as fast, and
+  // that turned out to be the real cause — Bilibili's image CDN refuses any
+  // Referer that is not bilibili.com. Verified separately: the cover returns 200
+  // with no referrer and 403 with ours, in about 20ms.
+  //
+  // So each host is now probed twice, once with the normal referrer and once
+  // with none. The comparison is what identifies the cause.
 
-  interface ImageProbe {
+  interface HostProbe {
     label: string
-    successMs: number
+    withReferer: number
+    withoutReferer: number
     total: number
-    failedMs: number
     slowMs: number
   }
 
-  const probeImages = async (label: string, urls: string[]): Promise<ImageProbe> => {
-    let successMs = 0
-    let failedMs = 0
+  const loadImage = (url: string, noReferrer: boolean): Promise<boolean> =>
+    new Promise((resolve) => {
+      const img = new Image()
+      if (noReferrer) img.referrerPolicy = 'no-referrer'
+      const timer = window.setTimeout(() => resolve(false), 8000)
+      img.onload = () => {
+        window.clearTimeout(timer)
+        resolve(true)
+      }
+      img.onerror = () => {
+        window.clearTimeout(timer)
+        resolve(false)
+      }
+      const sep = url.includes('?') ? '&' : '?'
+      img.src = `${url}${sep}cb=${Date.now()}${noReferrer ? '&nr=1' : '&nr=0'}`
+    })
+
+  const probeHost = async (label: string, urls: string[]): Promise<HostProbe> => {
+    let withReferer = 0
+    let withoutReferer = 0
     let slowMs = 0
     for (const url of urls) {
-      const started = Date.now()
-      const ok = await new Promise<boolean>((resolve) => {
-        const img = new Image()
-        const timer = window.setTimeout(() => resolve(false), 8000)
-        img.onload = () => {
-          window.clearTimeout(timer)
-          resolve(true)
-        }
-        img.onerror = () => {
-          window.clearTimeout(timer)
-          resolve(false)
-        }
-        img.src = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`
-      })
-      const took = Date.now() - started
-      slowMs = Math.max(slowMs, took)
-      if (ok) successMs++
-      else failedMs++
+      let started = Date.now()
+      if (await loadImage(url, true)) withoutReferer++
+      slowMs = Math.max(slowMs, Date.now() - started)
+
+      started = Date.now()
+      if (await loadImage(url, false)) withReferer++
+      slowMs = Math.max(slowMs, Date.now() - started)
     }
-    return { label, successMs, total: urls.length, failedMs, slowMs }
+    return { label, withReferer, withoutReferer, total: urls.length, slowMs }
   }
 
-  const youtubeThumbs = await probeImages('YouTube thumbnails', [
-    'https://i.ytimg.com/vi/dQw4w9WgXcQ/hq720.jpg',
-    'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-    'https://i.ytimg.com/vi/9bZkp7q19f0/mqdefault.jpg',
-  ])
+  const hosts = [
+    await probeHost('YouTube thumbnails', [
+      'https://i.ytimg.com/vi/dQw4w9WgXcQ/hq720.jpg',
+      'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+    ]),
+    await probeHost('Bilibili thumbnails', [
+      'https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico',
+      'https://i0.hdslb.com/bfs/archive/b2b297bdb449dfe09e49d4300a06c83cf42a8c11.jpg@480w_270h_1c.webp',
+    ]),
+  ]
 
-  for (const probe of [youtubeThumbs]) {
-    const blocked = probe.failedMs > 0 && probe.slowMs < 3000
+  for (const h of hosts) {
+    const hotlink = h.withReferer === 0 && h.withoutReferer > 0
+    const deviceBlock = h.withReferer === 0 && h.withoutReferer === 0
     out.push({
-      label: probe.label,
+      label: h.label,
       value:
-        probe.failedMs === probe.total
-          ? `ALL ${probe.total} FAILED (took ${probe.slowMs}ms each)`
-          : `${probe.successMs} of ${probe.total} loaded, slowest ${probe.slowMs}ms`,
-      verdict: probe.failedMs === 0 ? 'ok' : probe.successMs === 0 ? 'bad' : 'info',
+        `with referrer ${h.withReferer}/${h.total}` +
+        ` · without referrer ${h.withoutReferer}/${h.total}` +
+        ` · slowest ${h.slowMs}ms`,
+      verdict: h.withoutReferer === h.total ? 'ok' : deviceBlock ? 'bad' : 'info',
     })
-    if (probe.failedMs > 0) {
+    if (hotlink) {
       out.push({
-        label: 'Thumbnail failure looks like a device filter',
-        value: blocked
-          ? 'yes - requests fail almost instantly rather than timing out, which is what a content filter does'
-          : 'unclear - they took a long time, which looks more like a slow network',
-        verdict: blocked ? 'bad' : 'info',
+        label: `${h.label} verdict`,
+        value:
+          'HOTLINK PROTECTION — the host refuses requests that carry a referrer. Loading with referrerPolicy="no-referrer" fixes it.',
+        verdict: 'bad',
+      })
+    } else if (deviceBlock) {
+      out.push({
+        label: `${h.label} verdict`,
+        value:
+          'BLOCKED BOTH WAYS — not a referrer issue. Something on this device or network is stopping the request, such as a content filter.',
+        verdict: 'bad',
       })
     }
   }
-
-  const bilibiliThumbs = await probeImages('Bilibili thumbnails', [
-    'https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico',
-    'https://i0.hdslb.com/bfs/archive/b2b297bdb449dfe09e49d4300a06c83cf42a8c11.jpg@480w_270h_1c.webp',
-  ])
-  out.push({
-    label: bilibiliThumbs.label,
-    value:
-      bilibiliThumbs.failedMs === bilibiliThumbs.total
-        ? `ALL ${bilibiliThumbs.total} FAILED (took ${bilibiliThumbs.slowMs}ms each)`
-        : `${bilibiliThumbs.successMs} of ${bilibiliThumbs.total} loaded, slowest ${bilibiliThumbs.slowMs}ms`,
-    verdict: bilibiliThumbs.failedMs === 0 ? 'ok' : bilibiliThumbs.successMs === 0 ? 'bad' : 'info',
-  })
 
   // Reaching the search function also proves Supabase is reachable from here.
   const fnReachable = await fetch(
@@ -2220,6 +2227,7 @@ function MyLibrary({
                 <img
                   src={v.thumbnailUrl}
                   alt=""
+                  referrerPolicy="no-referrer"
                   className="h-[45px] w-20 shrink-0 rounded object-cover"
                 />
                 <div className="min-w-0 flex-1">

@@ -81,6 +81,11 @@ function ThumbnailImage({ video, priority = false }: { video: Video; priority?: 
       fetchPriority={priority ? 'high' : 'auto'}
       decoding="async"
       draggable={false}
+      // Bilibili's image CDN checks the Referer and answers 403 to anything that
+      // is not bilibili.com. Verified: with our referrer the cover is refused in
+      // about 20ms, with no referrer it returns 200. Sending none fixes Bilibili
+      // covers and costs nothing for YouTube, which ignores the header entirely.
+      referrerPolicy="no-referrer"
       className="h-full w-full object-cover"
       onError={() => {
         if (index < sources.length - 1) setIndex((i) => i + 1)
