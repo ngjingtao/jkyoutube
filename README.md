@@ -41,8 +41,9 @@ Then open <http://localhost:5173>. Admin panel is at <http://localhost:5173/admi
 **iPad**
 
 1. Make sure the iPad is on the same Wi-Fi as this PC.
-2. Start the dev server: `npm run dev` — it prints a *Network* address.
-   On this PC that is **`http://192.168.68.114:5173`**.
+2. Start the dev server: `npm run dev` — it prints a *Network* address such as
+   `http://192.168.68.120:5173`. **Use whatever it prints** rather than a fixed
+   value: this machine's address has already changed once (it was .114, now .120).
 3. On the iPad, open that address in **Safari** (not Chrome).
 4. Share → **Add to Home Screen** → open it from the home screen.
    The address bar disappears. This is the real test of the illusion.
