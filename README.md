@@ -71,6 +71,7 @@ Same steps as the iPad using **Chrome** → *Install app*. The proper APK comes 
 - [x] PWA manifest, app icons, iOS standalone meta tags
 - [x] No outbound link to youtube.com anywhere in the viewer UI, plus a click
       shield over the embedded player's own title bar
+- [x] Screen kept awake while a video is playing (Screen Wake Lock API)
 
 ### Keeping viewers inside the app
 
@@ -103,6 +104,25 @@ deliberately does not do.
 
 Because of that, the real protection is at the device level: block `youtube.com`
 and the YouTube app using **Screen Time** (iPad) or **Family Link** (Android).
+
+### The iPad screen going to sleep
+
+The video plays inside a YouTube or Bilibili iframe, so the top-level page counts
+as idle and iPadOS dims and locks the screen after a few minutes. The app now
+takes a **Screen Wake Lock** while playback is running, and releases it when the
+video pauses or ends. For Bilibili the lock is held for the whole watch page,
+because their embed exposes no playback events.
+
+Two things to know:
+
+- Wake Lock needs **HTTPS** (so it works on Render, but not on the plain-HTTP
+  `http://192.168.x.x` dev address) and **iPadOS 18.4 or newer** for Home Screen
+  web apps. On 16.4–18.3 it silently does nothing in standalone mode; the same
+  iPad works in a normal Safari tab. Updating iPadOS is the fix there.
+- Low Power Mode can refuse the lock. If the screen still sleeps while charging,
+  the app is not the problem.
+
+The lock is best effort: if the browser denies it, playback is unaffected.
 
 **Admin panel**
 - [x] Preview passcode gate

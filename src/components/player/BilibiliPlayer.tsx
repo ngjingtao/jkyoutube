@@ -1,5 +1,6 @@
 import { bilibiliEmbedUrl } from '../../lib/bilibili'
 import type { BilibiliRef } from '../../lib/format'
+import { useWakeLock } from '../../lib/wakelock'
 
 /**
  * Bilibili playback.
@@ -74,6 +75,12 @@ export function BilibiliPlayer({
   className?: string
 }) {
   const src = bilibiliEmbedUrl(bilibiliRef, { autoplay, startSeconds })
+
+  // Held for the whole life of the watch page, not just while "playing": the
+  // Bilibili embed exposes no playback events at all (see above), so there is
+  // no way to know when it pauses. The viewer opened a watch page, which is
+  // the closest available signal that the screen should stay on.
+  useWakeLock(true)
 
   return (
     <div className={`relative ${className ?? ''}`}>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useWakeLock } from '../../lib/wakelock'
 
 /**
  * YouTube's official IFrame Player API.
@@ -155,6 +156,10 @@ export function YouTubePlayer({
   const playingRef = useRef(false)
   const [failed, setFailed] = useState<PlayerError | null>(null)
   const [attempt, setAttempt] = useState(0)
+  // The iframe owns the video, so the top-level page must ask the OS to keep the
+  // screen on for as long as the iframe reports playback.
+  const [keepingAwake, setKeepingAwake] = useState(false)
+  useWakeLock(keepingAwake)
 
   // Latest callbacks without re-creating the player.
   const endedRef = useRef(onEnded)
@@ -211,6 +216,12 @@ export function YouTubePlayer({
             onStateChange: (e: { data: number }) => {
               if (window.YT) {
                 playingRef.current = e.data === window.YT.PlayerState.PLAYING
+                // Buffering counts as playing: a slow connection must not let
+                // the screen dim while the viewer is waiting for the video.
+                setKeepingAwake(
+                  e.data === window.YT.PlayerState.PLAYING ||
+                    e.data === window.YT.PlayerState.BUFFERING,
+                )
                 if (e.data === window.YT.PlayerState.ENDED) endedRef.current?.()
               }
             },
@@ -392,6 +403,9 @@ export function NativePlayer({
   className?: string
   onEnded?: () => void
 }) {
+  const [playing, setPlaying] = useState(false)
+  useWakeLock(playing)
+
   return (
     <div className={className}>
       <video
@@ -400,7 +414,13 @@ export function NativePlayer({
         controls
         playsInline
         autoPlay={autoplay}
-        onEnded={onEnded}
+        onPlay={() => setPlaying(true)}
+        onPlaying={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false)
+          onEnded?.()
+        }}
         className="h-full w-full bg-black"
       />
     </div>
