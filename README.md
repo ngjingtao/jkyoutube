@@ -104,6 +104,8 @@ deliberately does not do.
 
 Because of that, the real protection is at the device level: block `youtube.com`
 and the YouTube app using **Screen Time** (iPad) or **Family Link** (Android).
+The one deliberate exception is the admin's **Viewer mode** switch — see
+*Switching a viewer to normal YouTube* below.
 
 ### The iPad screen going to sleep
 
@@ -138,6 +140,34 @@ The lock is best effort: if the browser denies it, playback is unaffected.
 - [x] "Refresh all from YouTube" to update view counts, likes and subscriber
       counts on demand
 - [x] Bilibili as a second video source, in its own card
+- [x] "Viewer mode": switch the iPad/Android app between your curated library
+      and the real youtube.com, using the account already signed in on the device
+
+### Switching a viewer to normal YouTube
+
+Admin → **Viewer mode** has two choices:
+
+- **Curated JKYoutube** (the default) — the app you built here.
+- **Normal YouTube** — when a viewer device opens the app, it navigates to
+  `https://www.youtube.com/` instead and uses whichever Google account that
+  device is already signed into. There is no switch or message on the iPad: it
+  simply shows different content.
+
+The choice is stored in Supabase (key `viewerMode`), so it applies to every
+viewer device at once. It requires the shared database and an admin sign-in,
+because the browser's public key may only read settings. A viewer that is already
+open picks the change up within a minute, or when it comes back to the
+foreground.
+
+To return to the curated app, choose **Curated JKYoutube** on the PC, then
+**close the app completely** on the iPad (swipe it away in the app switcher) and
+reopen it. Tapping the Home Screen icon without closing may just resume the
+YouTube page. `/admin` is never redirected, so the content manager stays
+reachable on any device.
+
+YouTube's main site refuses to load in an iframe, so this is a real navigation,
+not an embedded screen. The app cannot sign the device into Google for you; if
+YouTube asks, sign in once on that device and the session stays.
 
 ### Bilibili support, and its limits
 

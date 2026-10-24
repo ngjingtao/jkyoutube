@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import { Capacitor } from '@capacitor/core'
 import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
-import { signIn, signOut } from '../lib/remote'
+import { fetchSetting, saveSetting, signIn, signOut } from '../lib/remote'
+import type { ViewerMode } from '../lib/viewerMode'
+import { NORMAL_YOUTUBE_URL } from '../lib/viewerMode'
 import {
   classNames,
   formatDuration,
@@ -201,6 +203,8 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       <ApiKeyCard />
 
       <LibraryContentsCard />
+
+      <ViewerModeCard />
 
       <SuggestionsCard />
 
@@ -1218,6 +1222,140 @@ function LibraryContentsCard() {
           will still show the placeholders — not a bug, just the missing database.
         </span>
       </p>
+    </section>
+  )
+}
+
+/* ----------------------------------------------------- viewer mode -------- */
+
+/**
+ * The one switch that changes what the iPad and Android app open.
+ *
+ * It stores the choice in Supabase, so the PC writes it once and every viewer
+ * follows. Nothing appears on the viewer side: the iPad either shows the
+ * curated app or hands the screen to youtube.com.
+ */
+function ViewerModeCard() {
+  const { signedInAs } = useLibrary()
+  const [mode, setMode] = useState<ViewerMode | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void fetchSetting<ViewerMode>('viewerMode').then((value) => {
+      setMode(value === 'youtube' ? 'youtube' : 'curated')
+    })
+  }, [])
+
+  const choose = async (next: ViewerMode) => {
+    if (busy || mode === next) return
+    setBusy(true)
+    setSaved(false)
+    setError(null)
+    try {
+      await saveSetting('viewerMode', next)
+      setMode(next)
+      setSaved(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const options: Array<{ value: ViewerMode; label: string; hint: string }> = [
+    {
+      value: 'curated',
+      label: 'Curated JKYoutube',
+      hint: 'The app you built here, with only the videos you added.',
+    },
+    {
+      value: 'youtube',
+      label: 'Normal YouTube',
+      hint: 'The viewer opens youtube.com instead, using whichever Google account that device already has.',
+    },
+  ]
+
+  const current =
+    mode === null ? 'Reading…' : mode === 'youtube' ? 'Normal YouTube' : 'Curated JKYoutube'
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <h2 className="text-[16px] font-semibold text-fg">Viewer mode</h2>
+      <p className="mt-1 text-[13px] text-fg2">
+        Currently: <strong className="font-medium text-fg">{current}</strong>
+      </p>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 sm:gap-3">
+        {options.map((o) => {
+          const active = o.value === mode
+          return (
+            <button
+              key={o.value}
+              type="button"
+              disabled={busy || !signedInAs}
+              onClick={() => void choose(o.value)}
+              className={classNames(
+                'rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
+                active ? 'border-[#065fd4] bg-[#065fd4]/10' : 'border-line hover:bg-chip',
+              )}
+            >
+              <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
+                {active ? <CheckIcon size={16} /> : <span className="inline-block h-4 w-4" />}
+                {o.label}
+                {busy && !active ? <SpinnerIcon size={14} /> : null}
+              </span>
+              <span className="mt-0.5 block pl-6 text-[12px] leading-4 text-fg2">{o.hint}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {!signedInAs ? (
+        <p className="mt-3 flex items-start gap-2 text-[12px] leading-5 text-fg2">
+          <AlertIcon size={16} className="mt-px shrink-0" />
+          <span>
+            Sign in to the <strong className="font-medium text-fg">Shared database</strong> card
+            above first. This is a shared setting, so it has to be saved to the database, not just
+            this browser.
+          </span>
+        </p>
+      ) : null}
+
+      {error ? <p className="mt-3 text-[12px] leading-5 text-[#c00]">{error}</p> : null}
+      {saved ? (
+        <p className="mt-3 text-[12px] leading-5 text-fg2">
+          Saved. The iPad and Android app pick this up when they next open, come back to the
+          foreground, or within a minute if they are already open.
+        </p>
+      ) : null}
+
+      <div className="mt-3 rounded-lg bg-chip p-3 text-[12px] leading-5 text-fg2">
+        <p>
+          <strong className="font-medium text-fg">On the iPad:</strong> close the app completely
+          (swipe it away in the app switcher), then open it again from the Home Screen.
+        </p>
+        <p className="mt-1">
+          <strong className="font-medium text-fg">To come back:</strong> choose Curated JKYoutube
+          here, then close and reopen the iPad app. Tapping the icon without closing may simply
+          return to the YouTube page that is already open.
+        </p>
+        <p className="mt-1">
+          Normal YouTube uses whatever Google account that device is already signed into. We cannot
+          sign it in from here — if YouTube asks, sign in once on the iPad and it stays signed in.
+        </p>
+        <p className="mt-1">
+          <a
+            href={NORMAL_YOUTUBE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-[#065fd4]"
+          >
+            Open youtube.com on this PC to check which account is signed in
+          </a>
+        </p>
+      </div>
     </section>
   )
 }
