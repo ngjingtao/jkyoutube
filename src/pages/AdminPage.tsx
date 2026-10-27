@@ -5,7 +5,7 @@ import { fetchOEmbed, useLibrary } from '../store/library'
 import type { LibraryMode } from '../store/library'
 import { fetchSetting, saveSetting, signIn, signOut } from '../lib/remote'
 import type { ViewerMode } from '../lib/viewerMode'
-import { NORMAL_YOUTUBE_URL } from '../lib/viewerMode'
+import { CURATED_PREVIEW_PATH, NORMAL_YOUTUBE_URL } from '../lib/viewerMode'
 import {
   classNames,
   formatDuration,
@@ -158,7 +158,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
         </div>
         <div className="flex items-center gap-2">
           <Link
-            to="/"
+            to={CURATED_PREVIEW_PATH}
             className="rounded-lg bg-chip px-4 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover"
           >
             Open the app
@@ -1229,11 +1229,13 @@ function LibraryContentsCard() {
 /* ----------------------------------------------------- viewer mode -------- */
 
 /**
- * The one switch that changes what the iPad and Android app open.
+ * The one switch that changes what the site opens.
  *
- * It stores the choice in Supabase, so the PC writes it once and every viewer
- * follows. Nothing appears on the viewer side: the iPad either shows the
- * curated app or hands the screen to youtube.com.
+ * It stores the choice in Supabase, so the PC writes it once and every device
+ * follows. Nothing appears on the viewer side: it either shows the curated app
+ * or hands the screen to youtube.com. Desktops follow the switch too; the
+ * "Open the app" link adds `?preview=curated` so the admin can still check the
+ * curated app without turning the switch off.
  */
 function ViewerModeCard() {
   const { signedInAs } = useLibrary()
@@ -1326,8 +1328,8 @@ function ViewerModeCard() {
       {error ? <p className="mt-3 text-[12px] leading-5 text-[#c00]">{error}</p> : null}
       {saved ? (
         <p className="mt-3 text-[12px] leading-5 text-fg2">
-          Saved. The iPad and Android app pick this up when they next open, come back to the
-          foreground, or within a minute if they are already open.
+          Saved. Every device picks this up when it next opens, comes back to the foreground, or
+          within a minute if it is already open.
         </p>
       ) : null}
 
@@ -1337,9 +1339,14 @@ function ViewerModeCard() {
           (swipe it away in the app switcher), then open it again from the Home Screen.
         </p>
         <p className="mt-1">
+          <strong className="font-medium text-fg">On this PC:</strong> the site goes to YouTube too.
+          Use <strong className="font-medium text-fg">Open the app</strong> above to look at the
+          curated app once, without changing the setting.
+        </p>
+        <p className="mt-1">
           <strong className="font-medium text-fg">To come back:</strong> choose Curated JKYoutube
-          here, then close and reopen the iPad app. Tapping the icon without closing may simply
-          return to the YouTube page that is already open.
+          here, reload this PC, then close and reopen the iPad app. Tapping the icon without closing
+          may simply return to the YouTube page that is already open.
         </p>
         <p className="mt-1">
           Normal YouTube uses whatever Google account that device is already signed into. We cannot

@@ -10,7 +10,7 @@ import { PlaylistPage } from './pages/PlaylistPage'
 import { ResultsPage } from './pages/ResultsPage'
 import { NotFoundPage, ShortsPage } from './pages/ShortsPage'
 import { WatchPage } from './pages/WatchPage'
-import { NORMAL_YOUTUBE_URL, fetchViewerMode, isViewerDevice } from './lib/viewerMode'
+import { NORMAL_YOUTUBE_URL, fetchViewerMode, isCuratedPreview } from './lib/viewerMode'
 
 /**
  * How long to wait for the shared setting before showing the curated app.
@@ -42,20 +42,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
  * Hands the screen to the real YouTube when the Admin page says so.
  *
  * This wraps only the viewer routes — `/admin` is deliberately outside it, so
- * the content manager stays reachable on every device even while the viewers
- * are in normal-YouTube mode.
+ * the content manager stays reachable on every device even while the site is
+ * in normal-YouTube mode.
  *
- * The iPad's own UI never shows a switch or a message: it either renders the
+ * The viewer UI never shows a switch or a message: it either renders the
  * curated app or navigates away to youtube.com, which is what "normal YouTube"
- * means to the person holding it.
+ * means to the person holding the device. Every device follows the setting,
+ * desktops included; `?preview=curated` opts out for one visit.
  */
 function ViewerModeGate({ children }: { children: React.ReactNode }) {
-  // The admin's desktop browser is never redirected, and has nothing to wait for.
-  const [checked, setChecked] = useState(() => !isViewerDevice())
+  const preview = isCuratedPreview()
+  // When previewing there is nothing to wait for, so render immediately.
+  const [checked, setChecked] = useState(preview)
   const redirectingRef = useRef(false)
 
   useEffect(() => {
-    if (!isViewerDevice()) return
+    if (preview) return
 
     let cancelled = false
 
@@ -91,7 +93,7 @@ function ViewerModeGate({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.clearInterval(interval)
     }
-  }, [])
+  }, [preview])
 
   // A black frame while the shared mode is read, so the curated feed never
   // flashes up for a moment before YouTube takes over.
