@@ -265,7 +265,7 @@ function StatsCard() {
       const { data, error: queryError } = await supabase
         .from('video_stats')
         .select('*')
-        .order('opens', { ascending: false })
+        .order('last_seen', { ascending: false })
         .limit(100)
       if (queryError) throw new Error(queryError.message)
       setRows((data ?? []) as VideoStat[])
