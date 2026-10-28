@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Capacitor } from '@capacitor/core'
 import { fetchOEmbed, useLibrary } from '../store/library'
@@ -21,6 +21,7 @@ import { useLocalStorage } from '../lib/hooks'
 import { supabase, supabasePublishableKey, supabaseUrl } from '../lib/supabase'
 import { recentLookups } from '../lib/suggestions'
 import { forgetYouTubeCache } from '../lib/youtubeFeed'
+import { forgetGoogleClientId } from '../lib/googleAuth'
 import { clearAllEvents } from '../lib/analytics'
 import {
   BilibiliSearchError,
@@ -52,6 +53,32 @@ const PREVIEW_PASSCODE = 'admin'
 
 export function AdminPage() {
   const [authed, setAuthed] = useLocalStorage('jk.adminPreview', false)
+
+  /**
+   * The Admin bookmarklet opens `/admin#yt-home=<encoded ids>` after reading the
+   * signed-in youtube.com page. Park the ids in localStorage so the import card
+   * can offer them even if this load is still behind the passcode/sign-in gate.
+   * The hash is removed at once; it never goes to the server.
+   */
+  useEffect(() => {
+    const marker = '#yt-home='
+    if (!window.location.hash.startsWith(marker)) return
+    try {
+      const decoded = JSON.parse(decodeURIComponent(window.location.hash.slice(marker.length)))
+      if (Array.isArray(decoded)) {
+        const ids = decoded
+          .filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{6,}$/.test(id))
+          .slice(0, 80)
+        if (ids.length > 0) {
+          window.localStorage.setItem('jk.pendingHomeImport', JSON.stringify(ids))
+        }
+      }
+    } catch {
+      /* a malformed hand-off should do nothing */
+    }
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  }, [])
+
   if (!authed) return <PasscodeGate onUnlock={() => setAuthed(true)} />
   return <AdminDashboard onSignOut={() => setAuthed(false)} />
 }
@@ -202,10 +229,12 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       </div>
 
       <ApiKeyCard />
+      <GoogleSignInCard />
 
       <LibraryContentsCard />
 
       <ViewerModeCard />
+      <HomeFeedImportCard />
 
       <SuggestionsCard />
 
@@ -1187,6 +1216,163 @@ function ApiKeyCard() {
 }
 
 /**
+ * The OAuth client id that lets viewers sign in with Google.
+ *
+ * This is what upgrades Normal YouTube from "popular videos" to the viewer's
+ * own subscriptions and liked videos. The id is public (it ships in the page),
+ * so it lives in the shared settings table; the OAuth consent screen is where
+ * the account grant actually happens.
+ */
+function GoogleSignInCard() {
+  const { signedInAs } = useLibrary()
+  const [draft, setDraft] = useState('')
+  const [shared, setShared] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  useEffect(() => {
+    void fetchSetting<string>('googleClientId').then((value) => {
+      const clientId = typeof value === 'string' ? value : ''
+      setShared(clientId)
+      setDraft((current) => current || clientId)
+    })
+  }, [])
+
+  const configured = Boolean(shared)
+
+  async function save(clientIdOverride?: string) {
+    if (!signedInAs) return
+    const clientId = (clientIdOverride ?? draft).trim()
+    if (clientId && !/\.apps\.googleusercontent\.com$/.test(clientId)) {
+      setStatus({
+        kind: 'err',
+        text: 'That does not look like an OAuth client ID. It ends with .apps.googleusercontent.com.',
+      })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await saveSetting('googleClientId', clientId)
+      setShared(clientId)
+      forgetGoogleClientId()
+      setStatus({
+        kind: 'ok',
+        text: clientId
+          ? 'Saved. Reload the viewer to show the Google sign-in button; then sign in once on the device that should use that account.'
+          : 'Removed. Normal YouTube will show the most-popular list and no sign-in button.',
+      })
+    } catch (err) {
+      setStatus({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Could not save the client ID.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">Google sign-in for viewers</h2>
+        <span
+          className={classNames(
+            'rounded-full px-2 py-0.5 text-[11px] font-medium',
+            configured ? 'bg-[#2ba640]/15 text-[#2ba640]' : 'bg-chip text-fg2',
+          )}
+        >
+          {configured ? 'Configured' : 'Optional'}
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Adds a <strong className="font-medium text-fg">Sign in with Google</strong> button to
+        Normal YouTube. Once a device signs in, Home shows the newest uploads from that account's
+        subscriptions and the videos it has liked, instead of the public popular list. Google does
+        not expose the personalised youtube.com home feed to other sites, even after sign-in, so
+        those two lists are the account-specific content that can be shown.
+      </p>
+
+      <details className="mt-3 rounded-lg border border-line p-3">
+        <summary className="cursor-pointer text-[13px] font-medium text-fg">
+          How to create the client ID (5 minutes)
+        </summary>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-[12px] leading-5 text-fg2">
+          <li>
+            In the same Google Cloud project, open{' '}
+            <span className="text-fg">APIs &amp; Services → OAuth consent screen</span>. Choose{' '}
+            <span className="text-fg">External</span>, then add your Google account under{' '}
+            <span className="text-fg">Test users</span>.
+          </li>
+          <li>
+            Under <span className="text-fg">Data access</span>, add the scope{' '}
+            <code className="mx-1 rounded bg-chip px-1">
+              https://www.googleapis.com/auth/youtube.readonly
+            </code>
+            . This is read-only; the app cannot change anything on the account.
+          </li>
+          <li>
+            Go to <span className="text-fg">Credentials → Create credentials → OAuth client ID</span>{' '}
+            and choose <span className="text-fg">Web application</span>.
+          </li>
+          <li>
+            Under <span className="text-fg">Authorized JavaScript origins</span>, add{' '}
+            <code className="mx-1 rounded bg-chip px-1">https://jkyoutube.onrender.com</code> (and{' '}
+            <code className="mx-1 rounded bg-chip px-1">http://localhost:5199</code> while
+            developing). No redirect URI is needed.
+          </li>
+          <li>Copy the client ID — it ends with <span className="text-fg">.apps.googleusercontent.com</span> — and paste it below.</li>
+        </ol>
+      </details>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setStatus(null)
+          }}
+          placeholder="1234567890-abc123.apps.googleusercontent.com"
+          className="h-10 min-w-[240px] flex-1 rounded-lg border border-line bg-search px-3 text-[14px] text-fg outline-none focus:border-[#1c62b9]"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || !signedInAs}
+          className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#065fd4] px-4 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+        >
+          {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+          Save
+        </button>
+        {configured ? (
+          <button
+            type="button"
+            onClick={() => {
+              setDraft('')
+              void save('')
+            }}
+            disabled={busy || !signedInAs}
+            className="h-10 rounded-lg bg-chip px-4 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-50"
+          >
+            Remove
+          </button>
+        ) : null}
+      </div>
+
+      {!signedInAs ? (
+        <p className="mt-2 text-[12px] leading-5 text-[#ff9d00]">
+          Sign in to the Shared database card above to save this shared setting.
+        </p>
+      ) : null}
+
+      <StatusMessage message={status} />
+    </section>
+  )
+}
+
+/**
  * Controls whether the bundled placeholder library is shown.
  *
  * The placeholders are hardcoded, so without a control here the app could never
@@ -1401,6 +1587,257 @@ function ViewerModeCard() {
           </a>
         </p>
       </div>
+    </section>
+  )
+}
+
+/* ------------------------------------------------- youtube home import ---- */
+
+/**
+ * Transfers the owner's actual youtube.com home feed into the app.
+ *
+ * A web page cannot read youtube.com's cookies or call YouTube as the signed-in
+ * account — the browser forbids it. Instead, a bookmarklet runs *on* youtube.com,
+ * reads the video links already rendered there, and hands only those ids to this
+ * page through the URL fragment. No password or cookie ever leaves the browser.
+ */
+function HomeFeedImportCard() {
+  const { signedInAs } = useLibrary()
+  // Read the hand-off before the first paint: child effects run before the
+  // parent's, so the AdminPage hash-clearing effect cannot be relied on here.
+  const [pending, setPending] = useState<string[] | null>(() => {
+    try {
+      const marker = '#yt-home='
+      if (window.location.hash.startsWith(marker)) {
+        const parsed = JSON.parse(decodeURIComponent(window.location.hash.slice(marker.length)))
+        const ids = Array.isArray(parsed)
+          ? parsed
+              .filter(
+                (id): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{6,}$/.test(id),
+              )
+              .slice(0, 80)
+          : []
+        if (ids.length > 0) {
+          window.localStorage.setItem('jk.pendingHomeImport', JSON.stringify(ids))
+          window.history.replaceState(null, '', window.location.pathname + window.location.search)
+          return ids
+        }
+      }
+
+      const raw = window.localStorage.getItem('jk.pendingHomeImport')
+      if (!raw) return null
+      const stored = JSON.parse(raw) as unknown
+      if (!Array.isArray(stored)) return null
+      const ids = stored.filter(
+        (id): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{6,}$/.test(id),
+      )
+      return ids.length > 0 ? ids : null
+    } catch {
+      return null
+    }
+  })
+  const [current, setCurrent] = useState<{ ids: string[]; importedAt: string | null } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  useEffect(() => {
+    void fetchSetting<{ ids?: unknown; importedAt?: unknown }>('youtubeHomeFeed').then((value) => {
+      setCurrent({
+        ids: Array.isArray(value?.ids)
+          ? value.ids.filter((id): id is string => typeof id === 'string')
+          : [],
+        importedAt: typeof value?.importedAt === 'string' ? value.importedAt : null,
+      })
+    })
+  }, [])
+
+  const bookmarklet = useMemo(() => {
+    const origin = typeof window === 'undefined' ? '' : window.location.origin
+    const script = `javascript:(()=>{try{const ids=[...new Set([...document.querySelectorAll('a[href*="/watch?v="]')].map(a=>{try{return new URL(a.href).searchParams.get('v')}catch(e){return null}}).filter(Boolean))].slice(0,80);if(!ids.length){alert('No videos found. Open youtube.com home, let it load, then scroll a little and try again.');return}window.open(${JSON.stringify(origin + '/admin#yt-home=')}+encodeURIComponent(JSON.stringify(ids)),'_blank')}catch(e){alert('Could not read this page: '+e.message)}})()`
+    return script
+  }, [])
+
+  // React blocks javascript: URLs in href, so set it directly on the element.
+  const bookmarkletRef = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    bookmarkletRef.current?.setAttribute('href', bookmarklet)
+  }, [bookmarklet])
+
+  async function importPending() {
+    if (!pending || pending.length === 0) return
+    if (!signedInAs) {
+      setStatus({ kind: 'err', text: 'Sign in to the Shared database card above first.' })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      const importedAt = new Date().toISOString()
+      await saveSetting('youtubeHomeFeed', { ids: pending, importedAt })
+      window.localStorage.removeItem('jk.pendingHomeImport')
+      setCurrent({ ids: pending, importedAt })
+      setPending(null)
+      setStatus({
+        kind: 'ok',
+        text: `Imported ${pending.length} videos. Viewer devices pick them up within a few minutes or on reload.`,
+      })
+    } catch (err) {
+      setStatus({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Could not save the imported feed.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function discardPending() {
+    window.localStorage.removeItem('jk.pendingHomeImport')
+    setPending(null)
+    setStatus(null)
+  }
+
+  async function clearFeed() {
+    if (!signedInAs) {
+      setStatus({ kind: 'err', text: 'Sign in to the Shared database card above first.' })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await saveSetting('youtubeHomeFeed', { ids: [], importedAt: null })
+      setCurrent({ ids: [], importedAt: null })
+      setStatus({ kind: 'ok', text: 'Removed. Normal YouTube falls back to the popular list.' })
+    } catch (err) {
+      setStatus({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Could not clear the imported feed.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const importedCount = current?.ids.length ?? 0
+
+  return (
+    <section className="mt-6 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[16px] font-semibold text-fg">Your YouTube home feed</h2>
+        <span
+          className={classNames(
+            'rounded-full px-2 py-0.5 text-[11px] font-medium',
+            importedCount > 0 ? 'bg-[#2ba640]/15 text-[#2ba640]' : 'bg-chip text-fg2',
+          )}
+        >
+          {importedCount > 0
+            ? `${importedCount} videos${current?.importedAt ? `, ${timeAgo(current.importedAt)}` : ''}`
+            : 'Not imported'}
+        </span>
+      </div>
+
+      <p className="mt-1 text-[13px] leading-5 text-fg2">
+        Normal YouTube can show the home feed from your signed-in youtube.com session. A website is
+        not allowed to read those cookies or call YouTube as your account, so this uses a
+        one-click bookmarklet instead: it reads the video list already visible on youtube.com and
+        passes only the video IDs here. No password or cookie is ever sent.
+      </p>
+
+      <ol className="mt-3 list-decimal space-y-1 pl-5 text-[12px] leading-5 text-fg2">
+        <li>
+          Drag{' '}
+          <a
+            ref={bookmarkletRef}
+            draggable
+            onClick={(e) => e.preventDefault()}
+            className="inline-block cursor-grab rounded bg-[#065fd4] px-2 py-0.5 font-medium text-white no-underline"
+            title="Drag me to the bookmarks bar"
+          >
+            Import my YouTube home
+          </a>{' '}
+          to the bookmarks bar of the browser where YouTube is signed in.
+        </li>
+        <li>
+          Open <span className="text-fg">youtube.com</span> in that browser, stay on the Home page,
+          and let the feed load. Scroll a little so more videos appear.
+        </li>
+        <li>Click the bookmark. This Admin page opens with the list — come back here and press Import.</li>
+      </ol>
+
+      <p className="mt-2 text-[12px] leading-5 text-fg2">
+        Can't drag it?{' '}
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard
+              ?.writeText(bookmarklet)
+              .then(() =>
+                setStatus({
+                  kind: 'ok',
+                  text: 'Bookmarklet copied. Create a bookmark in the browser where YouTube is signed in and paste it as the address.',
+                }),
+              )
+              .catch(() => undefined)
+          }}
+          className="font-medium text-[#065fd4]"
+        >
+          Copy the bookmarklet code
+        </button>{' '}
+        and create a bookmark with it as the address.
+      </p>
+
+      <p className="mt-2 text-[12px] leading-5 text-fg2">
+        It is a snapshot, not a live feed. Re-run the bookmarklet whenever you want YouTube's latest
+        picks. Videos are played from YouTube itself, using the API key above for details.
+      </p>
+
+      {pending ? (
+        <div className="mt-3 rounded-lg border border-[#065fd4]/40 bg-[#065fd4]/5 p-3">
+          <p className="text-[13px] font-medium text-fg">
+            {pending.length} {pending.length === 1 ? 'video' : 'videos'} received from youtube.com.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void importPending()}
+              disabled={busy || !signedInAs}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#065fd4] px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+            >
+              {busy ? <SpinnerIcon size={16} className="animate-spin" /> : null}
+              Import {pending.length} {pending.length === 1 ? 'video' : 'videos'}
+            </button>
+            <button
+              type="button"
+              onClick={discardPending}
+              disabled={busy}
+              className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-50"
+            >
+              Discard
+            </button>
+          </div>
+          {!signedInAs ? (
+            <p className="mt-2 text-[12px] leading-5 text-[#ff9d00]">
+              Sign in to the Shared database card above, then import. The list is kept in this
+              browser until you do.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {importedCount > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void clearFeed()}
+            disabled={busy || !signedInAs}
+            className="rounded-lg bg-chip px-3 py-2 text-[13px] font-medium text-fg hover:bg-chip-hover disabled:opacity-50"
+          >
+            Clear imported feed
+          </button>
+        </div>
+      ) : null}
+
+      <StatusMessage message={status} />
     </section>
   )
 }

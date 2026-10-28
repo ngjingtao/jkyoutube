@@ -5,6 +5,7 @@ import { VideoGrid } from '../components/VideoGrid'
 import { SpinnerIcon } from '../components/icons'
 import { useViewerMode } from '../lib/viewerMode'
 import { getYouTubeVideo, useYouTubeFeed } from '../lib/youtubeFeed'
+import { useYouTubeAccountFeed } from '../lib/youtubeAccount'
 import type { Video } from '../types'
 
 export type FeedKind =
@@ -44,6 +45,7 @@ export function FeedPage({ kind }: { kind: FeedKind }) {
   const mode = useViewerMode()
   const youtube = mode === 'youtube'
   const ytFeed = useYouTubeFeed(youtube)
+  const ytAccount = useYouTubeAccountFeed(youtube)
 
   const list = useMemo<Video[]>(() => {
     // Watched and saved lists store ids, which may point at either library or
@@ -56,10 +58,14 @@ export function FeedPage({ kind }: { kind: FeedKind }) {
 
     switch (kind) {
       case 'subscriptions':
-        return youtube ? [] : videos.filter((v) => subscriptions.includes(v.channelId))
+        // Signed in: newest uploads from the channels this account follows.
+        return youtube
+          ? ytAccount.subscriptionVideos
+          : videos.filter((v) => subscriptions.includes(v.channelId))
       case 'history':
         return history.map(resolve).filter(Boolean) as Video[]
       case 'liked':
+        if (youtube) return ytAccount.likedVideos
         return videos.filter((v) => reactions[v.id] === 'like').concat(
           Object.entries(reactions)
             .filter(([, value]) => value === 'like')
@@ -82,13 +88,21 @@ export function FeedPage({ kind }: { kind: FeedKind }) {
       default:
         return youtube ? ytFeed.videos : videos
     }
-  }, [kind, videos, subscriptions, history, reactions, watchLater, youtube, ytFeed])
+  }, [kind, videos, subscriptions, history, reactions, watchLater, youtube, ytFeed, ytAccount])
 
   const copy = COPY[kind]
   const usesYouTubeList =
     youtube && (kind === 'trending' || kind === 'music' || kind === 'gaming' || kind === 'news')
+  const usesYouTubeAccount =
+    youtube && (kind === 'subscriptions' || kind === 'liked') && ytAccount.signedIn
   const loading =
-    usesYouTubeList && (ytFeed.status === 'idle' || ytFeed.status === 'loading')
+    (usesYouTubeList && (ytFeed.status === 'idle' || ytFeed.status === 'loading')) ||
+    (usesYouTubeAccount && (ytAccount.status === 'idle' || ytAccount.status === 'loading'))
+  const error = usesYouTubeList
+    ? ytFeed.status === 'error' && ytFeed.error
+    : usesYouTubeAccount
+      ? ytAccount.status === 'error' && ytAccount.error
+      : null
 
   return (
     <div className="mx-auto max-w-[1754px] px-4 pb-16 pt-6 md:px-6">
@@ -104,12 +118,10 @@ export function FeedPage({ kind }: { kind: FeedKind }) {
           <SpinnerIcon size={28} className="animate-spin" />
           Loading YouTube videos…
         </div>
-      ) : usesYouTubeList && ytFeed.status === 'error' ? (
+      ) : error ? (
         <div className="py-24 text-center">
           <p className="text-[16px] text-fg">YouTube content is unavailable.</p>
-          <p className="mx-auto mt-2 max-w-[420px] text-[14px] leading-5 text-fg2">
-            {ytFeed.error}
-          </p>
+          <p className="mx-auto mt-2 max-w-[420px] text-[14px] leading-5 text-fg2">{error}</p>
         </div>
       ) : list.length ? (
         <VideoGrid videos={list} />

@@ -94,6 +94,9 @@ async function toApiError(res: Response): Promise<YouTubeApiError> {
     /* non-JSON error body */
   }
 
+  if (res.status === 401) {
+    return new YouTubeApiError('Your Google sign-in has expired. Sign in again.', 'unauthorized')
+  }
   if (res.status === 400 && /API key not valid/i.test(message)) {
     return new YouTubeApiError('That API key was rejected by Google. Check it was copied whole.', 'keyInvalid')
   }
@@ -149,6 +152,46 @@ export async function fetchChannelMetadata(
     const res = await fetch(url)
     if (!res.ok) throw await toApiError(res)
     const data = (await res.json()) as { items?: RawChannel[] }
+    for (const item of data.items ?? []) out.push(mapChannel(item))
+  }
+  return out
+}
+
+/**
+ * Signed-in calls use the OAuth token in a header instead of the API key.
+ * Used for private data such as subscriptions and the liked-videos playlist.
+ */
+export async function fetchJsonAuthorized<T>(url: string, accessToken: string): Promise<T> {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!res.ok) throw await toApiError(res)
+  return (await res.json()) as T
+}
+
+export async function fetchVideoMetadataAuthorized(
+  videoIds: string[],
+  accessToken: string,
+): Promise<YtVideoMetadata[]> {
+  const unique = [...new Set(videoIds.filter(Boolean))]
+  if (unique.length === 0) return []
+  const out: YtVideoMetadata[] = []
+  for (const ids of chunk(unique, 50)) {
+    const url = `${API_BASE}/videos?part=snippet,statistics,contentDetails,status&id=${ids.join(',')}`
+    const data = await fetchJsonAuthorized<{ items?: RawVideo[] }>(url, accessToken)
+    for (const item of data.items ?? []) out.push(mapVideo(item))
+  }
+  return out
+}
+
+export async function fetchChannelMetadataAuthorized(
+  channelIds: string[],
+  accessToken: string,
+): Promise<YtChannelMetadata[]> {
+  const unique = [...new Set(channelIds.filter(Boolean))]
+  if (unique.length === 0) return []
+  const out: YtChannelMetadata[] = []
+  for (const ids of chunk(unique, 50)) {
+    const url = `${API_BASE}/channels?part=snippet,statistics&id=${ids.join(',')}`
+    const data = await fetchJsonAuthorized<{ items?: RawChannel[] }>(url, accessToken)
     for (const item of data.items ?? []) out.push(mapChannel(item))
   }
   return out

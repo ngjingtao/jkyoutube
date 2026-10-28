@@ -4,7 +4,13 @@ import { useLibrary } from '../store/library'
 import { track } from '../lib/analytics'
 import { ensureSuggestions } from '../lib/suggestions'
 import { useViewerMode } from '../lib/viewerMode'
-import { getYouTubeChannel, useYouTubeFeed, useYouTubeVideo } from '../lib/youtubeFeed'
+import {
+  getYouTubeChannel,
+  useYouTubeFeed,
+  useYouTubeHomeFeed,
+  useYouTubeVideo,
+} from '../lib/youtubeFeed'
+import { useYouTubeAccountFeed } from '../lib/youtubeAccount'
 import { useLocalStorage, isIOS } from '../lib/hooks'
 import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from '../lib/format'
 import { ChannelAvatar } from '../components/ChannelAvatar'
@@ -105,6 +111,8 @@ export function WatchPage() {
   const mode = useViewerMode()
   const youtube = mode === 'youtube'
   const ytFeed = useYouTubeFeed(youtube)
+  const ytHome = useYouTubeHomeFeed(youtube)
+  const ytAccount = useYouTubeAccountFeed(youtube)
   const ytVideo = useYouTubeVideo(id, youtube)
 
   const video = youtube ? ytVideo.video : getVideo(id)
@@ -115,9 +123,24 @@ export function WatchPage() {
   const queue = useMemo(() => {
     if (!video) return []
     if (!youtube) return upNext(video.id, 20)
-    // Up next is the rest of YouTube's own list while in normal mode.
-    return ytFeed.videos.filter((v) => v.id !== video.id).slice(0, 20)
-  }, [video, upNext, youtube, ytFeed.videos])
+    // Prefer the imported home feed, then the signed-in account, then popular.
+    const pool =
+      ytHome.status === 'ready' && ytHome.videos.length > 0
+        ? ytHome.videos
+        : ytAccount.status === 'ready' && ytAccount.videos.length > 0
+          ? ytAccount.videos
+          : ytFeed.videos
+    return pool.filter((v) => v.id !== video.id).slice(0, 20)
+  }, [
+    video,
+    upNext,
+    youtube,
+    ytFeed.videos,
+    ytHome.status,
+    ytHome.videos,
+    ytAccount.status,
+    ytAccount.videos,
+  ])
 
   /**
    * Whether to offer the in-app fill-screen mode.

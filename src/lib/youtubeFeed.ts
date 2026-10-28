@@ -172,6 +172,13 @@ function channelsFromVideos(videos: YtVideoMetadata[]): Record<string, Channel> 
   return out
 }
 
+export function rememberYouTubeVideos(
+  videos: Video[],
+  channels: Record<string, Channel> = {},
+): void {
+  remember(videos, channels)
+}
+
 export function getYouTubeVideo(id: string): Video | undefined {
   return videoCache.get(id)
 }
@@ -426,6 +433,111 @@ export function useYouTubeChannel(id: string, enabled = true): YouTubeChannelSta
       cancelled = true
     }
   }, [id, enabled])
+
+  return state
+}
+
+/* ---------------------------------------------------- imported home feed --- */
+
+export interface YouTubeHomeFeedState {
+  status: YouTubeStatus
+  videos: Video[]
+  importedAt: string | null
+  error: string | null
+}
+
+let homeCache: { key: string; at: number; feed: YouTubeFeed; importedAt: string } | null = null
+let homePromise: Promise<{ feed: YouTubeFeed; importedAt: string }> | null = null
+
+/**
+ * A snapshot of the owner's youtube.com home feed, captured by the Admin
+ * bookmarklet and stored in the shared settings table.
+ *
+ * The browser cannot read youtube.com's session, so this is the safe way to
+ * transfer what a signed-in browser sees: the bookmarklet reads the rendered
+ * page and passes the video ids, never the cookies.
+ */
+async function loadHomeFeed(): Promise<{ feed: YouTubeFeed; importedAt: string }> {
+  const setting = await fetchSetting<{ ids?: unknown; importedAt?: unknown }>('youtubeHomeFeed')
+  const ids = Array.isArray(setting?.ids)
+    ? setting.ids
+        .filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{6,}$/.test(id))
+        .slice(0, 80)
+    : []
+  const importedAt = typeof setting?.importedAt === 'string' ? setting.importedAt : ''
+  if (ids.length === 0) {
+    return { feed: { videos: [], channels: {}, categories: [] }, importedAt: '' }
+  }
+
+  const cacheKey = `${importedAt}|${ids.join(',')}`
+  if (homeCache && homeCache.key === cacheKey && Date.now() - homeCache.at < 5 * 60_000) {
+    return homeCache
+  }
+  if (homePromise) return homePromise
+
+  homePromise = (async () => {
+    const key = await resolveYouTubeApiKey()
+    if (!key) throw new Error('No YouTube Data API key has been shared yet.')
+
+    const metadata = await fetchVideoMetadata(ids, key)
+    const channelIds = [...new Set(metadata.map((video) => video.channelId).filter(Boolean))]
+    const ytChannels = channelIds.length
+      ? await fetchChannelMetadata(channelIds, key).catch(() => [])
+      : []
+
+    const channels: Record<string, Channel> = channelsFromVideos(metadata)
+    for (const channel of ytChannels) {
+      const mapped = toChannel(channel)
+      channels[mapped.id] = mapped
+    }
+
+    const videos = metadata.map(toYouTubeVideo)
+    remember(videos, channels)
+    const feed: YouTubeFeed = { videos, channels, categories: [] }
+    homeCache = { key: cacheKey, at: Date.now(), feed, importedAt }
+    return { feed, importedAt }
+  })()
+
+  try {
+    return await homePromise
+  } finally {
+    homePromise = null
+  }
+}
+
+export function useYouTubeHomeFeed(enabled = true): YouTubeHomeFeedState {
+  const [state, setState] = useState<YouTubeHomeFeedState>(() =>
+    homeCache
+      ? { status: 'ready', error: null, ...homeCache.feed, importedAt: homeCache.importedAt }
+      : { status: 'idle', error: null, videos: [], importedAt: null },
+  )
+
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    setState((prev) => ({ ...prev, status: 'loading', error: null }))
+
+    void loadHomeFeed()
+      .then(({ feed, importedAt }) => {
+        if (!cancelled) {
+          setState({ status: 'ready', error: null, ...feed, importedAt: importedAt || null })
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setState({
+            status: 'error',
+            error: describeError(err),
+            videos: [],
+            importedAt: null,
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [enabled])
 
   return state
 }

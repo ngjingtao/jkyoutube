@@ -159,13 +159,25 @@ sign-in, because the browser's public key may only read settings. A viewer that
 is already open picks the change up within a minute, or when it comes back to
 the foreground.
 
-**Which list it shows.** Google does not let another website read the
-personalised home feed from youtube.com — that needs the viewer's own Google
-session on YouTube's site. The app therefore asks the YouTube Data API for the
-**most-popular list** for the device's region, which is real YouTube content but
-not personalised. Search uses YouTube's search endpoint (100 quota units per
-uncached query), and a channel page uses that channel's recent uploads
-(3 units).
+**Your own YouTube home feed.** Google does not let another website read the
+personalised home feed from youtube.com; a site cannot see youtube.com's cookies,
+and the API's old `home` feed is deprecated. The safe way to transfer it is the
+**Your YouTube home feed** card in Admin. Drag its **Import my YouTube home**
+bookmarklet to the bookmarks bar of the browser where YouTube is signed in, open
+youtube.com, let the feed load, then click it. The bookmarklet reads the video
+links already rendered on the page and opens Admin with only those IDs; press
+**Import** there. No password or cookie leaves the browser. It is a snapshot, so
+re-run it when you want YouTube's latest picks.
+
+Without an import, Home falls back to the **most-popular list** for the device's
+region. Search uses YouTube's search endpoint (100 quota units per uncached
+query), and a channel page uses that channel's recent uploads (3 units).
+
+**Optional Google sign-in.** Admin → **Google sign-in for viewers** adds a
+Google button that shows the newest uploads from the account's subscriptions and
+its liked videos. It needs a free OAuth client ID; the card explains the
+five-minute setup. This is account-specific but still not YouTube's algorithmic
+home feed, which Google does not expose to any third party.
 
 **API key.** Normal YouTube mode needs the key from the admin's YouTube Data API
 card. The admin's key is shared through the public `settings` row
@@ -180,8 +192,9 @@ adds `?preview=curated` so you can look at the curated app once without changing
 the setting.
 
 Videos that the owner has made non-embeddable are filtered out, so the grid only
-contains clips that can actually play in the in-app player. No Google sign-in is
-involved: the list comes from the API key, not from the viewer's account.
+contains clips that can actually play in the in-app player. The imported home
+snapshot and the popular list both come from the API key; the optional Google
+sign-in only adds subscriptions and likes.
 
 ### Bilibili support, and its limits
 
