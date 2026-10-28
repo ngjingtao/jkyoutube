@@ -4,7 +4,9 @@ import { useLibrary } from '../store/library'
 import { VideoGrid } from '../components/VideoGrid'
 import { ChannelAvatar } from '../components/ChannelAvatar'
 import { classNames, formatCount, formatSubscribers, formatViews } from '../lib/format'
-import { BellIcon } from '../components/icons'
+import { BellIcon, SpinnerIcon } from '../components/icons'
+import { useViewerMode } from '../lib/viewerMode'
+import { getYouTubeChannel, useYouTubeChannel, YT_CHANNEL_PREFIX } from '../lib/youtubeFeed'
 
 const TABS = ['Home', 'Videos', 'Shorts', 'Live', 'Playlists', 'Community', 'About'] as const
 
@@ -13,13 +15,30 @@ export function ChannelPage() {
   const { getChannel, getChannelVideos, isSubscribed, toggleSubscribe } = useLibrary()
   const [tab, setTab] = useState<string>('Videos')
 
-  const channel = getChannel(id)
-  const videos = getChannelVideos(id)
+  const mode = useViewerMode()
+  const youtube = mode === 'youtube' && id.startsWith(YT_CHANNEL_PREFIX)
+  const ytChannel = useYouTubeChannel(id, youtube)
+
+  const channel = youtube ? (ytChannel.channel ?? getYouTubeChannel(id)) : getChannel(id)
+  const videos = youtube ? ytChannel.videos : getChannelVideos(id)
 
   if (!channel) {
+    if (youtube && (ytChannel.status === 'idle' || ytChannel.status === 'loading')) {
+      return (
+        <div className="flex flex-col items-center gap-3 px-6 py-24 text-[14px] text-fg2">
+          <SpinnerIcon size={28} className="animate-spin" />
+          Loading channel…
+        </div>
+      )
+    }
     return (
       <div className="px-6 py-24 text-center">
         <h1 className="text-[20px] font-medium">This channel doesn't exist</h1>
+        {youtube && ytChannel.error ? (
+          <p className="mx-auto mt-2 max-w-[420px] text-[14px] leading-5 text-fg2">
+            {ytChannel.error}
+          </p>
+        ) : null}
         <Link to="/" className="mt-6 inline-block text-[14px] font-medium text-[#065fd4]">
           Go to Home
         </Link>

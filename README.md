@@ -104,8 +104,9 @@ deliberately does not do.
 
 Because of that, the real protection is at the device level: block `youtube.com`
 and the YouTube app using **Screen Time** (iPad) or **Family Link** (Android).
-The one deliberate exception is the admin's **Viewer mode** switch — see
-*Switching a viewer to normal YouTube* below.
+**Viewer mode** can also fill the same UI with YouTube's own most-popular list;
+that content still plays through the embedded player, with no outbound link —
+see *Switching to normal YouTube content* below.
 
 ### The iPad screen going to sleep
 
@@ -140,37 +141,47 @@ The lock is best effort: if the browser denies it, playback is unaffected.
 - [x] "Refresh all from YouTube" to update view counts, likes and subscriber
       counts on demand
 - [x] Bilibili as a second video source, in its own card
-- [x] "Viewer mode": switch every device between your curated library and the
-      real youtube.com, using the account already signed in on that device
+- [x] "Viewer mode": switch every device between your curated library and
+      YouTube's own list, without changing the UI
 
-### Switching a viewer to normal YouTube
+### Switching to normal YouTube content
 
 Admin → **Viewer mode** has two choices:
 
 - **Curated JKYoutube** (the default) — the app you built here.
-- **Normal YouTube** — when the site is opened it navigates to
-  `https://www.youtube.com/` instead and uses whichever Google account that
-  device is already signed into. There is no switch or message on the viewer
-  side: it simply shows different content. Desktop browsers follow the switch
-  too.
+- **Normal YouTube** — the same layout, cards and player, but Home, Trending,
+  category pages, search and channel pages read from YouTube instead of your
+  library. Nothing redirects and the viewer never sees a switch.
 
 The choice is stored in Supabase (key `viewerMode`), so it applies to every
-device at once. It requires the shared database and an admin sign-in,
-because the browser's public key may only read settings. A viewer that is already
-open picks the change up within a minute, or when it comes back to the
-foreground.
+device at once, desktops included. It requires the shared database and an admin
+sign-in, because the browser's public key may only read settings. A viewer that
+is already open picks the change up within a minute, or when it comes back to
+the foreground.
 
-To return to the curated app, choose **Curated JKYoutube** on the PC, reload the
-PC, then **close the app completely** on the iPad (swipe it away in the app
-switcher) and reopen it. Tapping the Home Screen icon without closing may just
-resume the YouTube page. `/admin` is never redirected, so the content manager
-stays reachable on any device, and **Open the app** there adds
-`?preview=curated` so you can look at the curated app once without changing the
-setting.
+**Which list it shows.** Google does not let another website read the
+personalised home feed from youtube.com — that needs the viewer's own Google
+session on YouTube's site. The app therefore asks the YouTube Data API for the
+**most-popular list** for the device's region, which is real YouTube content but
+not personalised. Search uses YouTube's search endpoint (100 quota units per
+uncached query), and a channel page uses that channel's recent uploads
+(3 units).
 
-YouTube's main site refuses to load in an iframe, so this is a real navigation,
-not an embedded screen. The app cannot sign the device into Google for you; if
-YouTube asks, sign in once on that device and the session stays.
+**API key.** Normal YouTube mode needs the key from the admin's YouTube Data API
+card. The admin's key is shared through the public `settings` row
+`youtubeApiKey` so viewer devices can fetch the list without visiting `/admin`.
+Restrict the key to the site's address in Google Cloud Console, because anyone
+who opens the app can read it.
+
+To return to the curated app, choose **Curated JKYoutube** on the PC and reload;
+an already-open viewer changes within a minute. `/admin` is never switched, so
+the content manager stays reachable on any device, and **Open the app** there
+adds `?preview=curated` so you can look at the curated app once without changing
+the setting.
+
+Videos that the owner has made non-embeddable are filtered out, so the grid only
+contains clips that can actually play in the in-app player. No Google sign-in is
+involved: the list comes from the API key, not from the viewer's account.
 
 ### Bilibili support, and its limits
 

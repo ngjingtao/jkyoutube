@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLibrary } from '../store/library'
 import { track } from '../lib/analytics'
 import { ensureSuggestions } from '../lib/suggestions'
+import { useViewerMode } from '../lib/viewerMode'
+import { getYouTubeChannel, useYouTubeFeed, useYouTubeVideo } from '../lib/youtubeFeed'
 import { useLocalStorage, isIOS } from '../lib/hooks'
 import { classNames, formatCount, formatSubscribers, formatViews, timeAgo } from '../lib/format'
 import { ChannelAvatar } from '../components/ChannelAvatar'
@@ -25,6 +27,7 @@ import {
   MoreVerticalIcon,
   SaveIcon,
   ShareIcon,
+  SpinnerIcon,
 } from '../components/icons'
 
 function PillButton({
@@ -99,12 +102,22 @@ export function WatchPage() {
 
   const [ytApiKey] = useLocalStorage('jk.youtubeApiKey', '')
 
-  const video = getVideo(id)
+  const mode = useViewerMode()
+  const youtube = mode === 'youtube'
+  const ytFeed = useYouTubeFeed(youtube)
+  const ytVideo = useYouTubeVideo(id, youtube)
+
+  const video = youtube ? ytVideo.video : getVideo(id)
   const [descOpen, setDescOpen] = useState(false)
   const [autoplayNext, setAutoplayNext] = useState(true)
   const [fillScreen, setFillScreen] = useState(false)
 
-  const queue = useMemo(() => (video ? upNext(video.id, 20) : []), [video, upNext])
+  const queue = useMemo(() => {
+    if (!video) return []
+    if (!youtube) return upNext(video.id, 20)
+    // Up next is the rest of YouTube's own list while in normal mode.
+    return ytFeed.videos.filter((v) => v.id !== video.id).slice(0, 20)
+  }, [video, upNext, youtube, ytFeed.videos])
 
   /**
    * Whether to offer the in-app fill-screen mode.
@@ -213,7 +226,7 @@ export function WatchPage() {
    */
   const filledForRef = useRef('')
   useEffect(() => {
-    if (!video || suggestionsRatio <= 0 || !ytApiKey.trim()) return
+    if (youtube || !video || suggestionsRatio <= 0 || !ytApiKey.trim()) return
     if (filledForRef.current === video.id) return
     filledForRef.current = video.id
 
@@ -221,7 +234,30 @@ export function WatchPage() {
       const added = await ensureSuggestions(video, ytApiKey, suggestionsRatio)
       if (added.length > 0) await reload()
     })()
-  }, [video, suggestionsRatio, ytApiKey, reload])
+  }, [video, suggestionsRatio, ytApiKey, reload, youtube])
+
+  // A direct link to a YouTube video needs one metadata lookup first.
+  if (youtube && !video) {
+    if (ytVideo.status === 'idle' || ytVideo.status === 'loading') {
+      return (
+        <div className="flex flex-col items-center gap-3 px-6 py-24 text-[14px] text-fg2">
+          <SpinnerIcon size={28} className="animate-spin" />
+          Loading video…
+        </div>
+      )
+    }
+    return (
+      <div className="px-6 py-24 text-center">
+        <h1 className="text-[20px] font-medium">This video isn't available</h1>
+        <p className="mx-auto mt-2 max-w-[420px] text-[14px] leading-5 text-fg2">
+          {ytVideo.error ?? 'It may have been removed, or the link may be wrong.'}
+        </p>
+        <Link to="/" className="mt-6 inline-block text-[14px] font-medium text-[#065fd4]">
+          Go to Home
+        </Link>
+      </div>
+    )
+  }
 
   if (!video) {
     return (
@@ -237,7 +273,9 @@ export function WatchPage() {
     )
   }
 
-  const channel = getChannel(video.channelId)
+  const channel = youtube
+    ? (ytFeed.channels[video.channelId] ?? getYouTubeChannel(video.channelId))
+    : getChannel(video.channelId)
   const reaction = reactions[video.id] ?? null
   const saved = watchLater.includes(video.id)
   const startSeconds = Number(params.get('t') ?? 0) || 0

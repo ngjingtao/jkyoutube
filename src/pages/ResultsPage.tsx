@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import { useLibrary } from '../store/library'
 import { VideoRow } from '../components/VideoCard'
 import { classNames } from '../lib/format'
-import { FilterIcon } from '../components/icons'
+import { FilterIcon, SpinnerIcon } from '../components/icons'
+import { useViewerMode } from '../lib/viewerMode'
+import { useYouTubeSearch } from '../lib/youtubeFeed'
 
 const FILTERS = ['All', 'Videos', 'Shorts', 'Live', 'Playlists', 'This week'] as const
 
@@ -11,9 +13,16 @@ export function ResultsPage() {
   const [params] = useSearchParams()
   const query = params.get('search_query') ?? ''
   const { search } = useLibrary()
+  const mode = useViewerMode()
+  const youtube = mode === 'youtube'
+  const ytSearch = useYouTubeSearch(query, youtube)
   const [filter, setFilter] = useState<string>('All')
 
-  const results = useMemo(() => search(query), [search, query])
+  const results = useMemo(
+    () => (youtube ? ytSearch.videos : search(query)),
+    [youtube, ytSearch.videos, search, query],
+  )
+  const searching = youtube && Boolean(query) && (ytSearch.status === 'idle' || ytSearch.status === 'loading')
 
   return (
     <div className="mx-auto max-w-[1280px] px-4 pb-16 pt-4 md:px-6">
@@ -45,6 +54,18 @@ export function ResultsPage() {
         <p className="py-20 text-center text-[14px] text-fg2">
           Type something in the search box to find videos.
         </p>
+      ) : searching ? (
+        <div className="flex flex-col items-center gap-3 py-20 text-[14px] text-fg2">
+          <SpinnerIcon size={28} className="animate-spin" />
+          Searching YouTube…
+        </div>
+      ) : youtube && ytSearch.status === 'error' ? (
+        <div className="py-20 text-center">
+          <p className="text-[16px] text-fg">YouTube search is unavailable.</p>
+          <p className="mx-auto mt-2 max-w-[420px] text-[14px] leading-5 text-fg2">
+            {ytSearch.error}
+          </p>
+        </div>
       ) : results.length === 0 ? (
         <div className="py-20 text-center">
           <p className="text-[16px] text-fg">

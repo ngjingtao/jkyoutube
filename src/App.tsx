@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { LibraryProvider } from './store/library'
@@ -10,7 +10,12 @@ import { PlaylistPage } from './pages/PlaylistPage'
 import { ResultsPage } from './pages/ResultsPage'
 import { NotFoundPage, ShortsPage } from './pages/ShortsPage'
 import { WatchPage } from './pages/WatchPage'
-import { NORMAL_YOUTUBE_URL, fetchViewerMode, isCuratedPreview } from './lib/viewerMode'
+import {
+  ViewerModeContext,
+  fetchViewerMode,
+  isCuratedPreview,
+  type ViewerMode,
+} from './lib/viewerMode'
 
 /**
  * How long to wait for the shared setting before showing the curated app.
@@ -39,22 +44,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 /**
- * Hands the screen to the real YouTube when the Admin page says so.
+ * Chooses which content the viewer routes render.
+ *
+ * The UI never changes and nothing redirects. In "Curated JKYoutube" the pages
+ * read the library; in "Normal YouTube" they read YouTube's own most-popular
+ * list through the same cards, player and layout.
  *
  * This wraps only the viewer routes — `/admin` is deliberately outside it, so
- * the content manager stays reachable on every device even while the site is
- * in normal-YouTube mode.
- *
- * The viewer UI never shows a switch or a message: it either renders the
- * curated app or navigates away to youtube.com, which is what "normal YouTube"
- * means to the person holding the device. Every device follows the setting,
- * desktops included; `?preview=curated` opts out for one visit.
+ * the content manager stays reachable on every device. Every device follows the
+ * setting, desktops included; `?preview=curated` opts out for one visit.
  */
 function ViewerModeGate({ children }: { children: React.ReactNode }) {
   const preview = isCuratedPreview()
   // When previewing there is nothing to wait for, so render immediately.
-  const [checked, setChecked] = useState(preview)
-  const redirectingRef = useRef(false)
+  const [mode, setMode] = useState<ViewerMode | null>(preview ? 'curated' : null)
 
   useEffect(() => {
     if (preview) return
@@ -62,24 +65,14 @@ function ViewerModeGate({ children }: { children: React.ReactNode }) {
     let cancelled = false
 
     const check = async () => {
-      if (cancelled || redirectingRef.current) return
-      try {
-        const mode = await withTimeout(fetchViewerMode(), MODE_CHECK_TIMEOUT_MS, 'curated')
-        if (cancelled || mode !== 'youtube') return
-        redirectingRef.current = true
-        // `replace` so our app is not left in the back stack, ready to bounce
-        // forward to YouTube again the moment the viewer goes back.
-        window.location.replace(NORMAL_YOUTUBE_URL)
-      } finally {
-        if (!cancelled) setChecked(true)
-      }
+      const next = await withTimeout(fetchViewerMode(), MODE_CHECK_TIMEOUT_MS, 'curated')
+      if (!cancelled) setMode(next)
     }
 
     void check()
 
     // Re-check when the viewer comes back to the app, and once a minute while
-    // it is open, so turning the switch on in Admin takes effect without the
-    // iPad having to be relaunched.
+    // it is open, so turning the switch in Admin takes effect without a reload.
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') void check()
     }
@@ -96,10 +89,10 @@ function ViewerModeGate({ children }: { children: React.ReactNode }) {
   }, [preview])
 
   // A black frame while the shared mode is read, so the curated feed never
-  // flashes up for a moment before YouTube takes over.
-  if (!checked) return <div className="min-h-screen bg-black" />
+  // flashes up before the YouTube content does.
+  if (mode === null) return <div className="min-h-screen bg-black" />
 
-  return <>{children}</>
+  return <ViewerModeContext.Provider value={mode}>{children}</ViewerModeContext.Provider>
 }
 
 export default function App() {

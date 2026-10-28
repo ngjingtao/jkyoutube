@@ -20,6 +20,7 @@ import {
 import { useLocalStorage } from '../lib/hooks'
 import { supabase, supabasePublishableKey, supabaseUrl } from '../lib/supabase'
 import { recentLookups } from '../lib/suggestions'
+import { forgetYouTubeCache } from '../lib/youtubeFeed'
 import { clearAllEvents } from '../lib/analytics'
 import {
   BilibiliSearchError,
@@ -1043,8 +1044,34 @@ function PendingLocalCard() {
 
 function ApiKeyCard() {
   const { apiKey, setApiKey, hasKey } = useEnrichment()
+  const { signedInAs } = useLibrary()
   const [draft, setDraft] = useState(apiKey)
+  const [sharedKey, setSharedKey] = useState<string | null>(null)
   const [status, setStatus] = useState<{ kind: 'ok' | 'err' | 'busy'; text: string } | null>(null)
+
+  useEffect(() => {
+    void fetchSetting<string>('youtubeApiKey').then((value) => {
+      setSharedKey(typeof value === 'string' ? value : '')
+    })
+  }, [])
+
+  /**
+   * Share the key with viewer devices.
+   *
+   * Normal YouTube mode needs it on the iPad/Android too, but those devices
+   * never visit the admin page. The settings table is publicly readable, which
+   * is why Google Cloud must restrict the key to this site's address.
+   */
+  useEffect(() => {
+    const key = apiKey.trim()
+    if (!signedInAs || !key || sharedKey === null || sharedKey === key) return
+    void saveSetting('youtubeApiKey', key)
+      .then(() => {
+        setSharedKey(key)
+        forgetYouTubeCache()
+      })
+      .catch(() => undefined)
+  }, [signedInAs, apiKey, sharedKey])
 
   async function test(key: string) {
     if (!key.trim()) {
@@ -1055,7 +1082,12 @@ function ApiKeyCard() {
     try {
       await verifyApiKey(key.trim())
       setApiKey(key.trim())
-      setStatus({ kind: 'ok', text: 'Key works. Real view counts, likes, subscribers, durations and upload dates will now be copied.' })
+      setStatus({
+        kind: 'ok',
+        text: signedInAs
+          ? 'Key works. Real metadata will be copied, and the key is shared with viewer devices so Normal YouTube can load its list.'
+          : 'Key works. Real view counts, likes, subscribers, durations and upload dates will now be copied.',
+      })
     } catch (err) {
       setStatus({ kind: 'err', text: describeError(err) })
     }
@@ -1138,7 +1170,9 @@ function ApiKeyCard() {
             onClick={() => {
               setApiKey('')
               setDraft('')
-              setStatus({ kind: 'err', text: 'Key removed. Metadata copying is off.' })
+              if (signedInAs) void saveSetting('youtubeApiKey', '')
+              forgetYouTubeCache()
+              setStatus({ kind: 'err', text: 'Key removed. Metadata copying and Normal YouTube are off.' })
             }}
             className="h-10 rounded-lg bg-chip px-4 text-[13px] font-medium text-fg hover:bg-chip-hover"
           >
@@ -1275,7 +1309,7 @@ function ViewerModeCard() {
     {
       value: 'youtube',
       label: 'Normal YouTube',
-      hint: 'The viewer opens youtube.com instead, using whichever Google account that device already has.',
+      hint: 'The same app, but filled with YouTube’s actual most-popular videos instead of your library.',
     },
   ]
 
@@ -1335,22 +1369,26 @@ function ViewerModeCard() {
 
       <div className="mt-3 rounded-lg bg-chip p-3 text-[12px] leading-5 text-fg2">
         <p>
-          <strong className="font-medium text-fg">On the iPad:</strong> close the app completely
-          (swipe it away in the app switcher), then open it again from the Home Screen.
+          <strong className="font-medium text-fg">How it works:</strong> the layout, cards and
+          player stay exactly the same. Only the video list changes — Home, Trending, search and
+          channel pages read from YouTube instead of your library.
         </p>
         <p className="mt-1">
-          <strong className="font-medium text-fg">On this PC:</strong> the site goes to YouTube too.
-          Use <strong className="font-medium text-fg">Open the app</strong> above to look at the
-          curated app once, without changing the setting.
+          <strong className="font-medium text-fg">Needs an API key:</strong> the key from the
+          YouTube Data API card is shared with viewer devices automatically, so they can fetch the
+          list without visiting this page. If the key is missing or restricted to the wrong address,
+          viewers see a short “YouTube content is unavailable” message instead of videos.
         </p>
         <p className="mt-1">
-          <strong className="font-medium text-fg">To come back:</strong> choose Curated JKYoutube
-          here, reload this PC, then close and reopen the iPad app. Tapping the icon without closing
-          may simply return to the YouTube page that is already open.
+          <strong className="font-medium text-fg">What it shows:</strong> YouTube’s current
+          most-popular list for the device’s region. Google does not let another website read the
+          personalised home feed from youtube.com, so this is the closest real YouTube list
+          available without signing the device into Google.
         </p>
         <p className="mt-1">
-          Normal YouTube uses whatever Google account that device is already signed into. We cannot
-          sign it in from here — if YouTube asks, sign in once on the iPad and it stays signed in.
+          <strong className="font-medium text-fg">On this PC:</strong> use{' '}
+          <strong className="font-medium text-fg">Open the app</strong> above to look at the curated
+          app once, without changing the setting.
         </p>
         <p className="mt-1">
           <a
@@ -1359,7 +1397,7 @@ function ViewerModeCard() {
             rel="noreferrer"
             className="font-medium text-[#065fd4]"
           >
-            Open youtube.com on this PC to check which account is signed in
+            Check youtube.com’s own list on this PC
           </a>
         </p>
       </div>

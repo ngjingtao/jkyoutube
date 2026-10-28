@@ -29,6 +29,15 @@ export interface YtVideoMetadata {
   likeCount: number
   thumbnailUrl: string
   isLive: boolean
+  /** YouTube's numeric category id, e.g. "10" for Music. */
+  categoryId: string
+  /** False when the owner disabled embedding; such videos cannot play here. */
+  embeddable: boolean
+}
+
+export interface YtVideoCategory {
+  id: string
+  title: string
 }
 
 export interface YtChannelMetadata {
@@ -118,7 +127,7 @@ export async function fetchVideoMetadata(
   const out: YtVideoMetadata[] = []
 
   for (const ids of chunk(unique, 50)) {
-    const url = `${API_BASE}/videos?part=snippet,statistics,contentDetails&id=${ids.join(',')}&key=${encodeURIComponent(apiKey)}`
+    const url = `${API_BASE}/videos?part=snippet,statistics,contentDetails,status&id=${ids.join(',')}&key=${encodeURIComponent(apiKey)}`
     const res = await fetch(url)
     if (!res.ok) throw await toApiError(res)
     const data = (await res.json()) as { items?: RawVideo[] }
@@ -145,6 +154,120 @@ export async function fetchChannelMetadata(
   return out
 }
 
+/**
+ * YouTube's most-popular list for a region, in YouTube's own order.
+ *
+ * Cost: 1 unit. This is what fills Home while Viewer mode is "Normal YouTube":
+ * it is real YouTube content, though not the personalised feed from youtube.com
+ * (Google only serves that to a signed-in session on its own site).
+ */
+export async function fetchTrendingVideos(
+  apiKey: string,
+  regionCode = 'US',
+): Promise<YtVideoMetadata[]> {
+  const params = new URLSearchParams({
+    part: 'snippet,statistics,contentDetails,status',
+    chart: 'mostPopular',
+    maxResults: '50',
+    regionCode,
+    key: apiKey,
+  })
+  const res = await fetch(`${API_BASE}/videos?${params.toString()}`)
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as { items?: RawVideo[] }
+  // Embedding can be disabled per video; those would show a dead player.
+  return (data.items ?? []).map(mapVideo).filter((v) => v.embeddable)
+}
+
+/** The category names YouTube uses in a region. Cost: 1 unit. */
+export async function fetchVideoCategories(
+  apiKey: string,
+  regionCode = 'US',
+): Promise<YtVideoCategory[]> {
+  const params = new URLSearchParams({
+    part: 'snippet',
+    regionCode,
+    key: apiKey,
+  })
+  const res = await fetch(`${API_BASE}/videoCategories?${params.toString()}`)
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as {
+    items?: Array<{ id?: string; snippet?: { title?: string; assignable?: boolean } }>
+  }
+  return (data.items ?? [])
+    .filter((item) => item.id && item.snippet?.assignable !== false)
+    .map((item) => ({ id: item.id as string, title: item.snippet?.title ?? 'Videos' }))
+}
+
+export interface YtChannelWithVideos {
+  channel: YtChannelMetadata
+  videos: YtVideoMetadata[]
+}
+
+/**
+ * A channel plus its recent uploads, for the channel page in Normal YouTube
+ * mode. Cost: 3 units (channel, uploads playlist, then the video details).
+ */
+export async function fetchChannelUploads(
+  channelId: string,
+  apiKey: string,
+): Promise<YtChannelWithVideos | null> {
+  const channelUrl = `${API_BASE}/channels?part=snippet,statistics,brandingSettings,contentDetails&id=${encodeURIComponent(channelId)}&key=${encodeURIComponent(apiKey)}`
+  const channelRes = await fetch(channelUrl)
+  if (!channelRes.ok) throw await toApiError(channelRes)
+  const channelData = (await channelRes.json()) as { items?: RawChannel[] }
+  const raw = channelData.items?.[0]
+  if (!raw) return null
+
+  const channel = mapChannel(raw)
+  const uploads = raw.contentDetails?.relatedPlaylists?.uploads
+  if (!uploads) return { channel, videos: [] }
+
+  const listUrl = `${API_BASE}/playlistItems?part=contentDetails&maxResults=50&playlistId=${encodeURIComponent(uploads)}&key=${encodeURIComponent(apiKey)}`
+  const listRes = await fetch(listUrl)
+  if (!listRes.ok) throw await toApiError(listRes)
+  const listData = (await listRes.json()) as {
+    items?: Array<{ contentDetails?: { videoId?: string } }>
+  }
+  const ids = (listData.items ?? [])
+    .map((item) => item.contentDetails?.videoId)
+    .filter((id): id is string => Boolean(id))
+
+  const videos = ids.length ? await fetchVideoMetadata(ids, apiKey) : []
+  return { channel, videos: videos.filter((v) => v.embeddable) }
+}
+
+/**
+ * Search YouTube itself, for the app's search box in Normal YouTube mode.
+ *
+ * Cost: 100 units for the search plus 1 for the details, so callers must cache
+ * the result aggressively. The free allowance is 10,000 units a day.
+ */
+export async function searchYouTubeVideos(
+  query: string,
+  apiKey: string,
+  maxResults = 25,
+): Promise<YtVideoMetadata[]> {
+  const params = new URLSearchParams({
+    part: 'snippet',
+    type: 'video',
+    maxResults: String(maxResults),
+    q: query,
+    videoEmbeddable: 'true',
+    safeSearch: 'moderate',
+    key: apiKey,
+  })
+  const res = await fetch(`${API_BASE}/search?${params.toString()}`)
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as {
+    items?: Array<{ id?: { videoId?: string } }>
+  }
+  const ids = (data.items ?? [])
+    .map((item) => item.id?.videoId)
+    .filter((id): id is string => Boolean(id))
+  return ids.length ? fetchVideoMetadata(ids, apiKey) : []
+}
+
 /** Cheapest possible call that proves a key works: 1 unit. */
 export async function verifyApiKey(apiKey: string): Promise<void> {
   const url = `${API_BASE}/videos?part=id&chart=mostPopular&maxResults=1&key=${encodeURIComponent(apiKey)}`
@@ -163,10 +286,12 @@ interface RawVideo {
     channelTitle?: string
     publishedAt?: string
     liveBroadcastContent?: string
+    categoryId?: string
     thumbnails?: Record<string, { url?: string }>
   }
   statistics?: { viewCount?: string; likeCount?: string }
   contentDetails?: { duration?: string }
+  status?: { embeddable?: boolean }
 }
 
 interface RawChannel {
@@ -179,6 +304,7 @@ interface RawChannel {
   }
   statistics?: { subscriberCount?: string }
   brandingSettings?: { image?: { bannerExternalUrl?: string } }
+  contentDetails?: { relatedPlaylists?: { uploads?: string } }
 }
 
 function bestThumb(thumbs: Record<string, { url?: string }> | undefined): string {
@@ -205,6 +331,8 @@ function mapVideo(item: RawVideo): YtVideoMetadata {
     likeCount: Number(item.statistics?.likeCount ?? 0),
     thumbnailUrl: bestThumb(s.thumbnails),
     isLive: liveState === 'live',
+    categoryId: s.categoryId ?? '',
+    embeddable: item.status?.embeddable !== false,
   }
 }
 

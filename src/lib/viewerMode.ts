@@ -1,20 +1,25 @@
+import { createContext, useContext } from 'react'
 import { fetchSetting } from './remote'
 
 /**
- * Which experience the site opens.
+ * Which content the viewer routes show.
  *
- * `curated` is the JKYoutube app. `youtube` means the app deliberately hands
- * the screen over to the real youtube.com, using whichever Google account the
- * browser is already signed into.
+ * `curated` is the library built in Admin. `youtube` keeps the same layout,
+ * cards and player, but fills them from YouTube's own most-popular list. The
+ * fetching and mapping live in youtubeFeed.ts.
  *
  * The setting is shared through Supabase (like `libraryMode`), so flipping it
  * on the PC applies to every device that opens the site. There is no switch on
  * the viewer side: a viewer only ever sees one of the two, never a control.
- *
- * YouTube's main site cannot be embedded — it refuses to render inside a
- * frame — so this is a navigation, not an in-app screen.
  */
 export type ViewerMode = 'curated' | 'youtube'
+
+/** Which content the viewer routes render. `/admin` is outside this. */
+export const ViewerModeContext = createContext<ViewerMode>('curated')
+
+export function useViewerMode(): ViewerMode {
+  return useContext(ViewerModeContext)
+}
 
 export const NORMAL_YOUTUBE_URL = 'https://www.youtube.com/'
 
