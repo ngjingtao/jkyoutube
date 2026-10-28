@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLibrary } from '../store/library'
+import { getYouTubeChannel } from '../lib/youtubeFeed'
 import { bilibiliPlaceholderThumbnail } from '../lib/bilibili'
 import {
   classNames,
@@ -128,7 +129,8 @@ export function VideoCard({
   priority?: boolean
 }) {
   const { getChannel } = useLibrary()
-  const channel = getChannel(video.channelId)
+  // YouTube-mode videos point at channels that are not in the shared library.
+  const channel = getChannel(video.channelId) ?? getYouTubeChannel(video.channelId)
 
   return (
     <div className="group relative">
@@ -175,7 +177,7 @@ export function VideoCard({
 /** Horizontal row card — used on search results and channel pages. */
 export function VideoRow({ video, priority = false }: { video: Video; priority?: boolean }) {
   const { getChannel } = useLibrary()
-  const channel = getChannel(video.channelId)
+  const channel = getChannel(video.channelId) ?? getYouTubeChannel(video.channelId)
 
   return (
     <div className="flex gap-4">
@@ -214,7 +216,7 @@ export function VideoRowCompact({
   priority?: boolean
 }) {
   const { getChannel } = useLibrary()
-  const channel = getChannel(video.channelId)
+  const channel = getChannel(video.channelId) ?? getYouTubeChannel(video.channelId)
 
   return (
     <Link
